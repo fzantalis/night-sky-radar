@@ -6,6 +6,32 @@ static bool contains(const std::string& hay, const char* needle) {
     return hay.find(needle) != std::string::npos;
 }
 
+// Catches the malformed-structure bugs substring matching cannot see.
+static bool wellFormed(const std::string& j) {
+    if (j.find(",]") != std::string::npos) return false;
+    if (j.find(",}") != std::string::npos) return false;
+    if (j.find("[,") != std::string::npos) return false;
+    if (j.find("{,") != std::string::npos) return false;
+    if (j.find(",,") != std::string::npos) return false;
+    int curly = 0, square = 0;
+    bool inStr = false, esc = false;
+    for (char c : j) {
+        if (esc) { esc = false; continue; }
+        if (inStr) {
+            if (c == '\\') esc = true;
+            else if (c == '"') inStr = false;
+            continue;
+        }
+        if (c == '"') inStr = true;
+        else if (c == '{') curly++;
+        else if (c == '}') curly--;
+        else if (c == '[') square++;
+        else if (c == ']') square--;
+        if (curly < 0 || square < 0) return false;
+    }
+    return curly == 0 && square == 0 && !inStr;
+}
+
 static Blip makeBlip(int id, const char* name, double r, bool vis) {
     Blip b;
     b.id = id;
@@ -70,6 +96,43 @@ void test_json_escapes_quotes_in_names(void) {
     TEST_ASSERT_TRUE(contains(j, "BAD\\\"NAME"));
 }
 
+void test_json_empty_snapshot_is_well_formed(void) {
+    Snapshot s;
+    s.status = ScopeStatus::Ok;
+    TEST_ASSERT_TRUE(wellFormed(toJson(s)));
+}
+
+void test_json_single_blip_is_well_formed(void) {
+    Snapshot s;
+    s.status = ScopeStatus::Ok;
+    s.blips.push_back(makeBlip(25544, "ISS (ZARYA)", 0.58, true));
+    TEST_ASSERT_TRUE(wellFormed(toJson(s)));
+}
+
+void test_json_with_multiple_blips_and_trails(void) {
+    Snapshot s;
+    s.status = ScopeStatus::Ok;
+
+    Blip a = makeBlip(1, "ALPHA", 0.1, true);
+    a.trail = {{0.10, 10.0}, {0.11, 11.0}, {0.12, 12.0}};
+
+    Blip b = makeBlip(2, "BRAVO", 0.2, true);
+    b.trail = {{0.20, 20.0}, {0.21, 21.0}, {0.22, 22.0}};
+
+    Blip c = makeBlip(3, "CHARLIE", 0.3, false);
+    c.trail = {{0.30, 30.0}, {0.31, 31.0}, {0.32, 32.0}};
+
+    s.blips.push_back(a);
+    s.blips.push_back(b);
+    s.blips.push_back(c);
+
+    const std::string j = toJson(s);
+    TEST_ASSERT_TRUE(wellFormed(j));
+    TEST_ASSERT_TRUE(contains(j, "\"id\":1"));
+    TEST_ASSERT_TRUE(contains(j, "\"id\":2"));
+    TEST_ASSERT_TRUE(contains(j, "\"id\":3"));
+}
+
 void test_rank_puts_visible_objects_first(void) {
     Snapshot s;
     s.blips.push_back(makeBlip(1, "DIM", 0.2, false));
@@ -113,6 +176,9 @@ int main(int, char**) {
     RUN_TEST(test_json_emits_blip_fields);
     RUN_TEST(test_json_empty_blips_is_valid_array);
     RUN_TEST(test_json_escapes_quotes_in_names);
+    RUN_TEST(test_json_empty_snapshot_is_well_formed);
+    RUN_TEST(test_json_single_blip_is_well_formed);
+    RUN_TEST(test_json_with_multiple_blips_and_trails);
     RUN_TEST(test_rank_puts_visible_objects_first);
     RUN_TEST(test_rank_orders_by_elevation_within_a_group);
     RUN_TEST(test_rank_caps_at_max_blips);
