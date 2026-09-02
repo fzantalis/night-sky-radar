@@ -1,6 +1,7 @@
 #include <unity.h>
 #include <cmath>
 #include <cstdio>
+#include <utility>
 #include "Propagator.h"
 #include "Tle.h"
 #include "TimeUtils.h"
@@ -107,6 +108,85 @@ void test_init_rejects_garbage(void) {
     TEST_ASSERT_FALSE(p.ready());
 }
 
+void test_move_constructor_transfers_state(void) {
+    Propagator src = makeProp();
+    const double srcEpoch = src.epochJd();
+    const long long t0 = unixAtJd(srcEpoch);
+
+    // Explicit move via std::move - NRVO would elide the move constructor
+    // entirely if we relied on a return value, so it must be exercised here.
+    Propagator dst(std::move(src));
+
+    // Destination is fully usable and reports ready.
+    TEST_ASSERT_TRUE(dst.ready());
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, srcEpoch, dst.epochJd());
+    Vec3 pos;
+    TEST_ASSERT_TRUE(dst.positionAt(t0, pos));
+    TEST_ASSERT_DOUBLE_WITHIN(5.0, EXP_X, pos.x);
+    TEST_ASSERT_DOUBLE_WITHIN(5.0, EXP_Y, pos.y);
+    TEST_ASSERT_DOUBLE_WITHIN(5.0, EXP_Z, pos.z);
+
+    // Source must be left in a well-defined, unusable state - not just its
+    // unique_ptrs nulled out while ready_/epochJd_ remain stale.
+    TEST_ASSERT_FALSE(src.ready());
+    TEST_ASSERT_DOUBLE_WITHIN(1e-12, 0.0, src.epochJd());
+    Vec3 untouched{11.0, 22.0, 33.0};
+    TEST_ASSERT_FALSE(src.positionAt(t0, untouched));
+    TEST_ASSERT_DOUBLE_WITHIN(1e-12, 11.0, untouched.x);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-12, 22.0, untouched.y);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-12, 33.0, untouched.z);
+}
+
+void test_move_assignment_transfers_state(void) {
+    Propagator src = makeProp();
+    const double srcEpoch = src.epochJd();
+    const long long t0 = unixAtJd(srcEpoch);
+
+    Propagator dst;
+    TEST_ASSERT_FALSE(dst.ready());
+    dst = std::move(src);
+
+    TEST_ASSERT_TRUE(dst.ready());
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, srcEpoch, dst.epochJd());
+    Vec3 pos;
+    TEST_ASSERT_TRUE(dst.positionAt(t0, pos));
+    TEST_ASSERT_DOUBLE_WITHIN(5.0, EXP_X, pos.x);
+    TEST_ASSERT_DOUBLE_WITHIN(5.0, EXP_Y, pos.y);
+    TEST_ASSERT_DOUBLE_WITHIN(5.0, EXP_Z, pos.z);
+
+    TEST_ASSERT_FALSE(src.ready());
+    TEST_ASSERT_DOUBLE_WITHIN(1e-12, 0.0, src.epochJd());
+    Vec3 untouched{11.0, 22.0, 33.0};
+    TEST_ASSERT_FALSE(src.positionAt(t0, untouched));
+    TEST_ASSERT_DOUBLE_WITHIN(1e-12, 11.0, untouched.x);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-12, 22.0, untouched.y);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-12, 33.0, untouched.z);
+}
+
+void test_position_at_360_minutes_matches_reference(void) {
+    // Vallado's published verification values for satellite 00005, taken
+    // from dnwrnr/sgp4's own tests/test_sgp4.cc (Apache-2.0, same upstream
+    // repo already vendored here), at tsince = 360.0 minutes.
+    const double EXP360_X = -7154.03120202;
+    const double EXP360_Y = -3783.17682504;
+    const double EXP360_Z = -3536.19412294;
+
+    Propagator p = makeProp();
+    const long long t360 = unixAtJd(p.epochJd()) + 360LL * 60LL;
+    Vec3 pos;
+    TEST_ASSERT_TRUE(p.positionAt(t360, pos));
+
+    // Tolerance derivation. positionAt takes int64 unix SECONDS, so the time
+    // is quantised by up to 0.5 s. From the published reference velocity at
+    // this point, speed = sqrt(4.741887409^2 + 4.151817765^2 + 2.093935425^2)
+    // = 6.64 km/s, so worst-case quantisation is ~3.3 km. 4 km covers it.
+    // Slower here than at epoch (8.07 km/s) because the orbit is eccentric
+    // (e=0.186) and this is further from perigee.
+    TEST_ASSERT_DOUBLE_WITHIN(4.0, EXP360_X, pos.x);
+    TEST_ASSERT_DOUBLE_WITHIN(4.0, EXP360_Y, pos.y);
+    TEST_ASSERT_DOUBLE_WITHIN(4.0, EXP360_Z, pos.z);
+}
+
 void test_init_does_not_throw_on_garbage(void) {
     // libsgp4 signals bad element sets by throwing. Propagator must absorb that
     // and return false - an exception must never escape to the caller.
@@ -131,6 +211,9 @@ int main(int, char**) {
     RUN_TEST(test_one_second_of_motion_is_orbital_speed);
     RUN_TEST(test_position_is_a_plausible_orbit_radius);
     RUN_TEST(test_position_changes_over_time);
+    RUN_TEST(test_move_constructor_transfers_state);
+    RUN_TEST(test_move_assignment_transfers_state);
+    RUN_TEST(test_position_at_360_minutes_matches_reference);
     RUN_TEST(test_uninitialised_propagator_refuses_to_propagate);
     RUN_TEST(test_init_rejects_garbage);
     RUN_TEST(test_init_does_not_throw_on_garbage);

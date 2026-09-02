@@ -10,8 +10,32 @@
 
 Propagator::Propagator() = default;
 Propagator::~Propagator() = default;
-Propagator::Propagator(Propagator&&) noexcept = default;
-Propagator& Propagator::operator=(Propagator&&) noexcept = default;
+
+Propagator::Propagator(Propagator&& other) noexcept
+    : tle_(std::move(other.tle_)),
+      sgp4_(std::move(other.sgp4_)),
+      epochJd_(other.epochJd_),
+      ready_(other.ready_) {
+    // Leave the moved-from object in a well-defined "not ready" state.
+    // `= default` would only null the unique_ptrs, leaving ready_/epochJd_
+    // stale (copied, not cleared) so a moved-from Propagator would still
+    // claim ready() == true with no propagator behind it.
+    other.ready_ = false;
+    other.epochJd_ = 0.0;
+}
+
+Propagator& Propagator::operator=(Propagator&& other) noexcept {
+    if (this != &other) {
+        tle_ = std::move(other.tle_);
+        sgp4_ = std::move(other.sgp4_);
+        epochJd_ = other.epochJd_;
+        ready_ = other.ready_;
+
+        other.ready_ = false;
+        other.epochJd_ = 0.0;
+    }
+    return *this;
+}
 
 bool Propagator::init(const Tle& tle) {
     ready_ = false;
