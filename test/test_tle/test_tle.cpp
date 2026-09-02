@@ -94,6 +94,49 @@ void test_mismatched_satnums_rejected(void) {
     TEST_ASSERT_FALSE(parseTle(ISS_NAME, ISS_L1, l2, t));
 }
 
+void test_rejected_parse_leaves_out_untouched(void) {
+    // Pre-populate a struct with distinctive sentinel values.
+    Tle t;
+    t.satnum = 424242;
+    t.launchYear = 1234;
+    t.launchNumber = 5678;
+    t.inclinationDeg = 12.34;
+    t.meanMotionRevPerDay = 5.6789;
+    std::strcpy(t.name, "SENTINEL");
+    std::strcpy(t.line1, "line1_sentinel");
+    std::strcpy(t.line2, "line2_sentinel");
+
+    // Case 1: Bad checksum (should fail at checksum validation).
+    char bad_checksum[70];
+    std::strcpy(bad_checksum, ISS_L1);
+    bad_checksum[20] = (bad_checksum[20] == '9') ? '8' : '9';  // corrupt a digit
+    TEST_ASSERT_FALSE(parseTle(ISS_NAME, bad_checksum, ISS_L2, t));
+    // All sentinels must remain intact.
+    TEST_ASSERT_EQUAL_INT(424242, t.satnum);
+    TEST_ASSERT_EQUAL_INT(1234, t.launchYear);
+    TEST_ASSERT_EQUAL_INT(5678, t.launchNumber);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, 12.34, t.inclinationDeg);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, 5.6789, t.meanMotionRevPerDay);
+    TEST_ASSERT_EQUAL_STRING("SENTINEL", t.name);
+    TEST_ASSERT_EQUAL_STRING("line1_sentinel", t.line1);
+    TEST_ASSERT_EQUAL_STRING("line2_sentinel", t.line2);
+
+    // Case 2: Mismatched satellite numbers (should fail at satnum comparison).
+    char l2_mismatch[70];
+    std::strcpy(l2_mismatch, ISS_L2);
+    l2_mismatch[6] = '3';  // change 25544 -> 25543 on line 2 only
+    TEST_ASSERT_FALSE(parseTle(ISS_NAME, ISS_L1, l2_mismatch, t));
+    // All sentinels must remain intact.
+    TEST_ASSERT_EQUAL_INT(424242, t.satnum);
+    TEST_ASSERT_EQUAL_INT(1234, t.launchYear);
+    TEST_ASSERT_EQUAL_INT(5678, t.launchNumber);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, 12.34, t.inclinationDeg);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, 5.6789, t.meanMotionRevPerDay);
+    TEST_ASSERT_EQUAL_STRING("SENTINEL", t.name);
+    TEST_ASSERT_EQUAL_STRING("line1_sentinel", t.line1);
+    TEST_ASSERT_EQUAL_STRING("line2_sentinel", t.line2);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_parses_satellite_number);
@@ -107,5 +150,6 @@ int main(int, char**) {
     RUN_TEST(test_wrong_line_numbers_rejected);
     RUN_TEST(test_short_line_rejected);
     RUN_TEST(test_mismatched_satnums_rejected);
+    RUN_TEST(test_rejected_parse_leaves_out_untouched);
     return UNITY_END();
 }
