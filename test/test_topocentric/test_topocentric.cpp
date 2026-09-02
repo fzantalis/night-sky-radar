@@ -149,6 +149,37 @@ void test_object_over_south_pole_is_due_south_from_northern_hemisphere(void) {
     TEST_ASSERT_TRUE(la.elDeg < 0.0);  // below horizon
 }
 
+void test_object_due_east_at_midlatitude_with_nonzero_lst(void) {
+    // Observer at 45N, 73E with GMST=137 gives LST=210 degrees.
+    // sin(210°) = -0.5, cos(210°) = -0.866 (both nonzero, unlike lst=0).
+    // This exercises the sinLst*d.y term in rS that is zero when lst=0.
+
+    constexpr double PI = 3.14159265358979323846;
+    constexpr double DEG2RAD = PI / 180.0;
+
+    Observer obs{45.0, 73.0, 0.0};
+    double gmst = 137.0;
+
+    Vec3 site = siteEci(obs, gmst);
+    Vec3 up = site.unit();
+
+    // Construct local east unit vector independently (not from SEZ rotation)
+    // to avoid mirroring any bug in that rotation.
+    const double lstRad = (gmst + obs.lonDeg) * DEG2RAD;
+    Vec3 east{-std::sin(lstRad), std::cos(lstRad), 0.0};
+
+    // Satellite 400 km above observer, 200 km to the east
+    Vec3 sat = site + up * 400.0 + east * 200.0;
+
+    LookAngles la = look(sat, obs, gmst);
+
+    // Both up and east have zero south-component, so rS=0 and az=atan2(rE,0)=90 exactly
+    TEST_ASSERT_DOUBLE_WITHIN(0.5, 90.0, la.azDeg);
+
+    // Elevation is positive but below 90
+    TEST_ASSERT_TRUE(la.elDeg > 0.0 && la.elDeg < 90.0);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_site_at_equator_prime_meridian_zero_gmst);
@@ -166,5 +197,6 @@ int main(int, char**) {
     RUN_TEST(test_object_over_equator_at_same_longitude_is_due_south_from_north);
     RUN_TEST(test_object_over_north_pole_is_still_due_north_from_southern_hemisphere);
     RUN_TEST(test_object_over_south_pole_is_due_south_from_northern_hemisphere);
+    RUN_TEST(test_object_due_east_at_midlatitude_with_nonzero_lst);
     return UNITY_END();
 }
