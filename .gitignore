@@ -1,0 +1,5 @@
+.pio/
+.vscode/
+firmware/secrets.h
+*.bin
+*.elf
