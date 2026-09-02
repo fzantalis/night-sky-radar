@@ -42,6 +42,25 @@ void test_gmst_advances_about_one_degree_per_solar_day(void) {
     TEST_ASSERT_DOUBLE_WITHIN(0.001, 0.9856, delta);
 }
 
+// GMST must be normalised even for pre-J2000 dates. The polynomial produces
+// negative seconds before J2000, testing the if (sec < 0.0) sec += 86400.0
+// normalization branch. Test T = -1 (one century before J2000) and several
+// other pre-2000 dates to ensure the negative-modulo branch is exercised.
+void test_gmst_is_normalised_for_pre_j2000_dates(void) {
+    // T = -1 (one century before J2000): JD 2415020.0
+    const double jd_t_minus_1 = 2451545.0 - 36525.0;
+    const double g1 = timeutils::gmstDegrees(jd_t_minus_1);
+    TEST_ASSERT_TRUE(g1 >= 0.0);
+    TEST_ASSERT_TRUE(g1 < 360.0);
+
+    // Test several other pre-2000 dates across a century
+    for (double jd = 2415020.0; jd < 2451545.0; jd += 9131.25) {
+        const double g = timeutils::gmstDegrees(jd);
+        TEST_ASSERT_TRUE(g >= 0.0);
+        TEST_ASSERT_TRUE(g < 360.0);
+    }
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_j2000_julian_date);
@@ -50,5 +69,6 @@ int main(int, char**) {
     RUN_TEST(test_gmst_at_j2000);
     RUN_TEST(test_gmst_is_normalised);
     RUN_TEST(test_gmst_advances_about_one_degree_per_solar_day);
+    RUN_TEST(test_gmst_is_normalised_for_pre_j2000_dates);
     return UNITY_END();
 }
