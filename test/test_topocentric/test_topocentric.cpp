@@ -104,6 +104,51 @@ void test_azimuth_always_in_range(void) {
     }
 }
 
+void test_object_over_north_pole_is_due_north_from_midlatitude(void) {
+    // Observer at 45N, 0E. Satellite at geographic north pole.
+    // By symmetry, this satellite is due north from any northern-hemisphere observer.
+    // Azimuth must be 0 (or very close, since rE should be exactly zero here).
+    Observer obs{45.0, 0.0, 0.0};
+    Vec3 sat{0.0, 0.0, 30000.0};  // over the north pole
+    LookAngles la = look(sat, obs, 0.0);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-6, 0.0, la.azDeg);
+    // Elevation should be positive and below 90 (roughly 35 degrees at this geometry)
+    TEST_ASSERT_TRUE(la.elDeg > 20.0 && la.elDeg < 50.0);
+}
+
+void test_object_over_equator_at_same_longitude_is_due_south_from_north(void) {
+    // Observer at 45N, 0E. Satellite at geostationary radius over equator at lon 0E.
+    // By symmetry, this is due south from the observer.
+    Observer obs{45.0, 0.0, 0.0};
+    Vec3 sat{42164.0, 0.0, 0.0};  // geostationary radius, over equator at observer's longitude
+    LookAngles la = look(sat, obs, 0.0);
+    TEST_ASSERT_DOUBLE_WITHIN(1.0, 180.0, la.azDeg);
+    // Elevation should be positive (well above horizon)
+    TEST_ASSERT_TRUE(la.elDeg > 0.0);
+}
+
+void test_object_over_north_pole_is_still_due_north_from_southern_hemisphere(void) {
+    // Observer at 45S, 0E. Satellite at geographic north pole.
+    // By symmetry, the north pole is still due north (azimuth 0) even from southern hemisphere.
+    // This catches sign errors that are symmetric about the equator.
+    // From southern hemisphere, the north celestial pole is below the horizon.
+    Observer obs{-45.0, 0.0, 0.0};
+    Vec3 sat{0.0, 0.0, 30000.0};
+    LookAngles la = look(sat, obs, 0.0);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-6, 0.0, la.azDeg);
+    TEST_ASSERT_TRUE(la.elDeg < 0.0);  // below horizon for southern observer
+}
+
+void test_object_over_south_pole_is_due_south_from_northern_hemisphere(void) {
+    // Observer at 45N, 0E. Satellite at geographic south pole.
+    // By symmetry, the south pole is due south (azimuth 180) from a northern observer.
+    Observer obs{45.0, 0.0, 0.0};
+    Vec3 sat{0.0, 0.0, -30000.0};  // over the south pole
+    LookAngles la = look(sat, obs, 0.0);
+    TEST_ASSERT_DOUBLE_WITHIN(1.0, 180.0, la.azDeg);
+    TEST_ASSERT_TRUE(la.elDeg < 0.0);  // below horizon
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_site_at_equator_prime_meridian_zero_gmst);
@@ -117,5 +162,9 @@ int main(int, char**) {
     RUN_TEST(test_azimuth_of_object_toward_south);
     RUN_TEST(test_azimuth_of_object_toward_west);
     RUN_TEST(test_azimuth_always_in_range);
+    RUN_TEST(test_object_over_north_pole_is_due_north_from_midlatitude);
+    RUN_TEST(test_object_over_equator_at_same_longitude_is_due_south_from_north);
+    RUN_TEST(test_object_over_north_pole_is_still_due_north_from_southern_hemisphere);
+    RUN_TEST(test_object_over_south_pole_is_due_south_from_northern_hemisphere);
     return UNITY_END();
 }
