@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <deque>
 #include <map>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -57,6 +58,23 @@ void rebuildFrom(const String& raw) {
 
     Serial.printf("[scope] tracking %u objects\n",
                   static_cast<unsigned>(tracked.size()));
+
+    // Prune trails for satnums that dropped out of the new tracked set (e.g.
+    // a decayed object or a catalogue change between refreshes). Without
+    // this, trails grows without bound over an unattended device's lifetime,
+    // since sampleTrails()/build() only erase entries for objects that are
+    // still tracked but currently below the horizon.
+    std::set<int> liveSatnums;
+    for (const Tracked& tr : tracked) {
+        liveSatnums.insert(tr.tle.satnum);
+    }
+    for (auto it = trails.begin(); it != trails.end(); ) {
+        if (liveSatnums.find(it->first) == liveSatnums.end()) {
+            it = trails.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 bool refreshDue(int64_t nowUnix) {
@@ -130,7 +148,11 @@ void loop() {
 
     const int64_t now = net::nowUnix();
 
-    if (net::wifiUp() && millis() >= nextAttemptMs && refreshDue(now)) {
+    // Rollover-safe: absolute millis() >= nextAttemptMs breaks for ~49 days
+    // after millis() wraps, since a pre-wrap nextAttemptMs stays numerically
+    // larger than the freshly-wrapped millis() for a long time. Unsigned
+    // subtraction wraps correctly, matching the trail timer below.
+    if (net::wifiUp() && static_cast<int32_t>(millis() - nextAttemptMs) >= 0 && refreshDue(now)) {
         attemptRefresh(now);
     }
 
