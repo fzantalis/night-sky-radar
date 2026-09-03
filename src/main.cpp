@@ -2,6 +2,26 @@
 
 #include "Config.h"
 #include "Net.h"
+#include "HttpApi.h"
+#include "Snapshot.h"
+
+// Real status handling, no blips yet. Task 9 replaces this with ScopeService.
+static Snapshot buildSnapshot() {
+    Snapshot s;
+    s.t = net::nowUnix();
+
+    if (!net::timeValid()) {
+        s.status = ScopeStatus::NoTime;
+        return s;
+    }
+    if (!config::hasLocation()) {
+        s.status = ScopeStatus::NoLocation;
+        return s;
+    }
+
+    s.status = net::wifiUp() ? ScopeStatus::Ok : ScopeStatus::Offline;
+    return s;
+}
 
 void setup() {
     Serial.begin(115200);
@@ -10,22 +30,13 @@ void setup() {
 
     config::begin();
     net::begin();
+    httpapi::begin(&buildSnapshot);
 
     Serial.printf("[boot] psram: %u bytes\n",
                   static_cast<unsigned>(ESP.getPsramSize()));
-    Serial.printf("[boot] location set: %s\n",
-                  config::hasLocation() ? "yes" : "no");
 }
 
 void loop() {
     net::loop();
-
-    static uint32_t last = 0;
-    if (millis() - last >= 5000) {
-        last = millis();
-        Serial.printf("[status] wifi=%d time=%d unix=%lld\n",
-                      net::wifiUp() ? 1 : 0,
-                      net::timeValid() ? 1 : 0,
-                      static_cast<long long>(net::nowUnix()));
-    }
+    httpapi::loop();
 }
