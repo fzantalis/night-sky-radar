@@ -4,6 +4,7 @@
 #include "Net.h"
 #include "HttpApi.h"
 #include "Snapshot.h"
+#include "TleStore.h"
 
 // Real status handling, no blips yet. Task 9 replaces this with ScopeService.
 static Snapshot buildSnapshot() {
@@ -31,6 +32,7 @@ void setup() {
     config::begin();
     net::begin();
     httpapi::begin(&buildSnapshot);
+    tlestore::begin();
 
     Serial.printf("[boot] psram: %u bytes\n",
                   static_cast<unsigned>(ESP.getPsramSize()));
