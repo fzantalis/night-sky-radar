@@ -24,6 +24,16 @@ let snap = null;
 let heading = 0;      // FixedNorth for now; ManualNorth/Magnetometer at M7
 let sweepDeg = 0;
 
+// Poll failure tracking. A transient drop must not blank a working display -
+// only after LINK_LOST_THRESHOLD consecutive misses do we degrade the status
+// text, and even then the last known blips keep drawing (dimmed).
+const LINK_LOST_THRESHOLD = 5;
+let consecutiveFailures = 0;
+
+function linkLost() {
+  return consecutiveFailures >= LINK_LOST_THRESHOLD;
+}
+
 // theta is sky-frame degrees (0 = true north). Canvas 0deg points right, so
 // subtract 90 to put north at the top. Heading rotation happens here, in the
 // renderer, never in the core.
@@ -89,6 +99,10 @@ function blipRadius(mag) {
 function drawBlips() {
   if (!snap || !snap.blips) return;
 
+  // Once the link is lost we keep showing the last known picture rather than
+  // erasing it, just dimmed so it reads as stale rather than live.
+  const dim = linkLost() ? 0.4 : 1;
+
   for (const b of snap.blips) {
     const colour = b.visible ? P.visible : P.text;
 
@@ -96,7 +110,7 @@ function drawBlips() {
       for (let i = 0; i < b.trail.length; i++) {
         const [tr, tt] = b.trail[i];
         const [x, y] = polar(tr, tt);
-        g.globalAlpha = 0.12 + 0.5 * (i / Math.max(1, b.trail.length));
+        g.globalAlpha = dim * (0.12 + 0.5 * (i / Math.max(1, b.trail.length)));
         g.fillStyle = colour;
         g.beginPath();
         g.arc(x, y, 1, 0, Math.PI * 2);
@@ -107,16 +121,19 @@ function drawBlips() {
 
     const [x, y] = polar(b.r, b.theta);
     g.fillStyle = colour;
+    g.globalAlpha = dim;
     g.beginPath();
     g.arc(x, y, blipRadius(b.mag), 0, Math.PI * 2);
     g.fill();
+    g.globalAlpha = 1;
   }
 }
 
 // The bottom arc holds roughly 20 characters. Anything longer must be
 // shortened in the core, not here.
 function statusLine() {
-  if (!snap) return 'CONNECTING';
+  if (linkLost()) return 'LINK LOST';   // failing long enough to call it dead
+  if (!snap) return 'CONNECTING';       // still within the initial grace period
   switch (snap.status) {
     case 'no_time':     return 'NO TIME';
     case 'no_location': return 'SET LOCATION';
@@ -133,10 +150,10 @@ function drawStatus() {
   g.font = '10px ui-monospace, monospace';
   g.textAlign = 'center';
   g.textBaseline = 'middle';
-  g.fillText(statusLine(), CX, 224);
+  g.fillText(statusLine(), CX, 212);
 
   if (snap && snap.tleAgeHours >= 0) {
-    g.fillText('TLE ' + snap.tleAgeHours.toFixed(0) + 'H', CX, 16);
+    g.fillText('TLE ' + snap.tleAgeHours.toFixed(0) + 'H', CX, 28);
   }
 }
 
@@ -153,8 +170,12 @@ async function poll() {
   try {
     const res = await fetch('/api/scope', { cache: 'no-store' });
     snap = await res.json();
+    consecutiveFailures = 0;
   } catch (e) {
-    snap = null;
+    // Transient drop: keep the last known snapshot on screen. consecutiveFailures
+    // drives the LINK_LOST_THRESHOLD degrade in statusLine()/drawBlips(), snap
+    // itself is left untouched (still null on a never-successful first load).
+    consecutiveFailures++;
   }
 }
 
