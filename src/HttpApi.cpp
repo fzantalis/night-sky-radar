@@ -3,12 +3,33 @@
 #include <Arduino.h>
 #include <LittleFS.h>
 #include <WebServer.h>
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 #include "Config.h"
 #include "ScopeService.h"
 
 namespace {
+
+// String::toDouble() is a bare atof()/strtod(s, NULL): it has no way to
+// reject NaN, +-inf, trailing garbage ("12abc") or a fully non-numeric value
+// ("abc", ""), all of which strtod happily turns into either a parsed
+// "number" or a silent 0.0. Parse by hand instead so we can refuse anything
+// that isn't a clean, finite number.
+bool parseFinite(const String& s, double& out) {
+    String t = s;
+    t.trim();
+    if (t.length() == 0) return false;
+
+    char* end = nullptr;
+    const double v = std::strtod(t.c_str(), &end);
+    if (end == t.c_str() || *end != '\0') return false;  // no parse, or trailing garbage
+    if (!std::isfinite(v)) return false;                 // NaN / +inf / -inf
+
+    out = v;
+    return true;
+}
 
 WebServer server(80);
 httpapi::SnapshotProvider snapshotProvider = nullptr;
@@ -50,9 +71,16 @@ void handleConfigPost() {
         return;
     }
 
-    const double lat = server.arg("lat").toDouble();
-    const double lon = server.arg("lon").toDouble();
-    const double alt = server.arg("alt").toDouble();
+    double lat, lon, alt;
+
+    // Reject anything that doesn't parse as a clean finite number BEFORE the
+    // range checks below - a NaN or inf comparison against a range is always
+    // false, so the range checks alone cannot see (and would silently admit)
+    // "nan", "inf", "-inf", or garbage like "abc"/"12abc"/"" that toDouble()
+    // would otherwise turn into 0.0.
+    if (!parseFinite(server.arg("lat"), lat)) { server.send(400, "text/plain", "lat is not a valid number"); return; }
+    if (!parseFinite(server.arg("lon"), lon)) { server.send(400, "text/plain", "lon is not a valid number"); return; }
+    if (!parseFinite(server.arg("alt"), alt)) { server.send(400, "text/plain", "alt is not a valid number"); return; }
 
     // Reject out-of-range values rather than storing a position that would
     // silently produce a wrong sky.
