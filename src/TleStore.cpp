@@ -4,7 +4,8 @@
 #include <Preferences.h>
 
 namespace {
-constexpr const char* TLE_PATH = "/tle_stations.txt";
+constexpr const char* TLE_PATH     = "/tle_stations.txt";
+constexpr const char* TLE_TMP_PATH = "/tle_stations.tmp";
 Preferences store;
 }  // namespace
 
@@ -14,8 +15,18 @@ void begin() {
     store.begin("tlestore", false);
 }
 
+// Writes to a temp path and renames over the real cache only once the write
+// has fully succeeded. Opening TLE_PATH directly in "w" mode would truncate
+// the existing good cache the instant this is called, so a short write or a
+// write of bad content (see ScopeService::attemptRefresh, which validates the
+// parsed content before ever calling this) could otherwise leave the device
+// with no usable cache at all. The rename is atomic on LittleFS.
 bool save(const String& raw) {
-    File f = LittleFS.open(TLE_PATH, "w");
+    if (LittleFS.exists(TLE_TMP_PATH)) {
+        LittleFS.remove(TLE_TMP_PATH);   // stale leftover from a prior failed write
+    }
+
+    File f = LittleFS.open(TLE_TMP_PATH, "w");
     if (!f) {
         Serial.println("[tle] cache open for write failed");
         return false;
@@ -25,6 +36,13 @@ bool save(const String& raw) {
 
     if (written != raw.length()) {
         Serial.println("[tle] cache short write");
+        LittleFS.remove(TLE_TMP_PATH);
+        return false;
+    }
+
+    if (!LittleFS.rename(TLE_TMP_PATH, TLE_PATH)) {
+        Serial.println("[tle] cache rename failed");
+        LittleFS.remove(TLE_TMP_PATH);
         return false;
     }
     return true;

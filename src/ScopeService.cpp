@@ -38,12 +38,14 @@ uint32_t nextAttemptMs = 0;
 uint32_t backoffMs     = BACKOFF_START_MS;
 uint32_t lastTrailMs   = 0;
 
-void rebuildFrom(const String& raw) {
-    std::vector<Tle> tles;
-    const int count = parseTleText(raw, tles, MAX_TRACKED);
-
+// Rebuilds `tracked` from an already-parsed element set. Callers that only
+// have raw text (the cached-file load path) go through rebuildFrom() below,
+// which parses once and delegates here; attemptRefresh() parses once for
+// validation and passes the same vector straight in, so the fetched body is
+// never parsed twice.
+void rebuildFromParsed(std::vector<Tle>& tles) {
     tracked.clear();
-    tracked.reserve(static_cast<size_t>(count));
+    tracked.reserve(tles.size());
 
     for (const Tle& t : tles) {
         Tracked tr;
@@ -77,25 +79,60 @@ void rebuildFrom(const String& raw) {
     }
 }
 
+// Cached-file load path: the only caller that starts from raw text rather
+// than an already-parsed vector.
+void rebuildFrom(const String& raw) {
+    std::vector<Tle> tles;
+    parseTleText(raw, tles, MAX_TRACKED);
+    rebuildFromParsed(tles);
+}
+
 bool refreshDue(int64_t nowUnix) {
     const double age = tlestore::ageHours(nowUnix);
     if (age < 0.0) return true;                       // never fetched
     return age >= static_cast<double>(REFRESH_HOURS);
 }
 
+void backoffAndRetryLater() {
+    backoffMs = (backoffMs * 2 > BACKOFF_MAX_MS) ? BACKOFF_MAX_MS : backoffMs * 2;
+    nextAttemptMs = millis() + backoffMs;
+}
+
 void attemptRefresh(int64_t nowUnix) {
     String raw;
     if (!tlefetcher::fetchGroup("stations", raw)) {
-        backoffMs = (backoffMs * 2 > BACKOFF_MAX_MS) ? BACKOFF_MAX_MS : backoffMs * 2;
-        nextAttemptMs = millis() + backoffMs;
+        backoffAndRetryLater();
         Serial.printf("[scope] refresh failed, retrying in %lu s\n",
                       static_cast<unsigned long>(backoffMs / 1000));
         return;
     }
 
+    // Parse and validate BEFORE anything touches flash or the freshness
+    // stamp. CelesTrak (and a truncated TLS read) can return HTTP 200 with a
+    // plain-text error body or a partial download; fetchGroup() only checks
+    // for a non-empty body, so the content itself must be validated here. A
+    // bad body must never overwrite a good cache, never get stamped fresh
+    // (that would block retry for REFRESH_HOURS), and never replace `tracked`.
+    std::vector<Tle> tles;
+    const int count = parseTleText(raw, tles, MAX_TRACKED);
+    const int previouslyTracked = static_cast<int>(tracked.size());
+
+    // Reject an empty parse outright, and reject a parse that yields fewer
+    // than half of what we were already tracking - that catches a partial
+    // download that still happens to parse cleanly (e.g. a truncated TLS
+    // read cut mid-file at a triple boundary).
+    const bool empty   = (count == 0);
+    const bool partial = (previouslyTracked > 0) && (count * 2 < previouslyTracked);
+    if (empty || partial) {
+        Serial.printf("[scope] refresh rejected: parsed %d element set(s) "
+                      "(had %d tracked), keeping existing cache\n",
+                      count, previouslyTracked);
+        backoffAndRetryLater();
+        return;
+    }
+
     if (!tlestore::save(raw)) {
-        backoffMs = (backoffMs * 2 > BACKOFF_MAX_MS) ? BACKOFF_MAX_MS : backoffMs * 2;
-        nextAttemptMs = millis() + backoffMs;
+        backoffAndRetryLater();
         return;
     }
 
@@ -107,13 +144,17 @@ void attemptRefresh(int64_t nowUnix) {
     backoffMs = BACKOFF_START_MS;
     nextAttemptMs = millis() + 60UL * 1000UL;
 
-    rebuildFrom(raw);
+    // Drive the rebuild from the vector we already parsed above - never parse
+    // the fetched body twice.
+    rebuildFromParsed(tles);
 }
 
 void sampleTrails(int64_t nowUnix, const Observer& obs) {
     const double gmst = timeutils::gmstDegrees(timeutils::julianDate(nowUnix));
 
-    for (const Tracked& tr : tracked) {
+    // Propagator::positionAt is non-const (the vendored SGP4 mutates through
+    // a const-qualified method internally), so this must bind non-const.
+    for (Tracked& tr : tracked) {
         Vec3 pos;
         if (!tr.prop.positionAt(nowUnix, pos)) continue;
 
@@ -156,10 +197,11 @@ void loop() {
         attemptRefresh(now);
     }
 
-    if (!config::hasLocation()) return;
-
+    // hasLocation() takes the NVS mutex for four lookups; only pay for it
+    // when the trail timer actually fires, not on every spin of loop().
     if (millis() - lastTrailMs >= TRAIL_INTERVAL_MS) {
         lastTrailMs = millis();
+        if (!config::hasLocation()) return;
         sampleTrails(now, config::observer());
     }
 }
@@ -177,7 +219,9 @@ Snapshot build() {
     const Observer obs  = config::observer();
     const double   gmst = timeutils::gmstDegrees(timeutils::julianDate(s.t));
 
-    for (const Tracked& tr : tracked) {
+    // Propagator::positionAt is non-const (see Propagator.h), so this must
+    // bind non-const.
+    for (Tracked& tr : tracked) {
         Vec3 pos;
         if (!tr.prop.positionAt(s.t, pos)) continue;
 
@@ -185,12 +229,13 @@ Snapshot build() {
         if (la.elDeg < 0.0) continue;   // below the horizon, not drawable
 
         Blip b;
-        b.id        = tr.tle.satnum;
-        b.name      = tr.tle.name;
-        b.r         = skyRadius(la.elDeg);
-        b.theta     = la.azDeg;
-        b.magnitude = 99.0;    // M2 computes this
-        b.visible   = false;   // M2 computes this
+        b.id           = tr.tle.satnum;
+        b.name         = tr.tle.name;
+        b.r            = skyRadius(la.elDeg);
+        b.theta        = la.azDeg;
+        b.elevationDeg = la.elDeg;
+        b.magnitude    = 99.0;    // M2 computes this
+        b.visible      = false;   // M2 computes this
 
         auto it = trails.find(tr.tle.satnum);
         if (it != trails.end()) {

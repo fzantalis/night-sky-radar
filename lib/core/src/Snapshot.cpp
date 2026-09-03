@@ -3,6 +3,17 @@
 #include <algorithm>
 #include <cstdio>
 
+#include "Projection.h"
+
+std::vector<Ring> defaultSkyRings() {
+    return {
+        {60.0, skyRadius(60.0), "grid"},
+        {30.0, skyRadius(30.0), "grid"},
+        {10.0, skyRadius(10.0), "floor"},
+        {0.0,  skyRadius(0.0),  "horizon"},
+    };
+}
+
 namespace {
 
 const char* statusName(ScopeStatus s) {
@@ -78,6 +89,8 @@ std::string toJson(const Snapshot& s) {
         j += num(b.r, 4);
         j += ",\"theta\":";
         j += num(b.theta, 2);
+        j += ",\"el\":";
+        j += num(b.elevationDeg, 2);
         j += ",\"mag\":";
         j += num(b.magnitude, 2);
         j += ",\"visible\":";
@@ -94,6 +107,22 @@ std::string toJson(const Snapshot& s) {
         j += "]}";
     }
 
-    j += "]}";
+    j += "]";
+
+    j += ",\"rings\":[";
+    for (size_t i = 0; i < s.rings.size(); ++i) {
+        const Ring& rg = s.rings[i];
+        if (i > 0) j += ',';
+        j += "{\"el\":";
+        j += num(rg.elevationDeg, 0);
+        j += ",\"r\":";
+        j += num(rg.r, 4);
+        j += ",\"kind\":\"";
+        j += escape(rg.kind);
+        j += "\"}";
+    }
+    j += "]";
+
+    j += "}";
     return j;
 }

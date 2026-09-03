@@ -60,7 +60,7 @@ bool Propagator::init(const Tle& tle) {
     }
 }
 
-bool Propagator::positionAt(int64_t unixSeconds, Vec3& posKm) const {
+bool Propagator::positionAt(int64_t unixSeconds, Vec3& posKm) {
     if (!ready_ || !sgp4_) {
         return false;
     }

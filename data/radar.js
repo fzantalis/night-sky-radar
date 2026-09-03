@@ -50,14 +50,23 @@ function ring(rNorm, colour) {
   g.stroke();
 }
 
+// The core computes ring radii from elevation via skyRadius() and tells us
+// which ones are the visibility floor / horizon; this only picks a colour
+// for each `kind`. No projection math belongs here.
+function ringColour(kind) {
+  if (kind === 'floor') return P.floor;
+  if (kind === 'horizon') return P.gridMid;
+  return P.gridDim;
+}
+
 function drawChrome() {
   g.fillStyle = P.bg;
   g.fillRect(0, 0, SIZE, SIZE);
 
-  ring((90 - 60) / 90, P.gridDim);   // elevation 60
-  ring((90 - 30) / 90, P.gridDim);   // elevation 30
-  ring((90 - 10) / 90, P.floor);     // visibility floor, elevation 10
-  ring(1.0, P.gridMid);              // horizon
+  const rings = (snap && snap.rings) ? snap.rings : [];
+  for (const rg of rings) {
+    ring(rg.r, ringColour(rg.kind));
+  }
 
   g.strokeStyle = P.gridDim;
   for (let th = 0; th < 360; th += 30) {
@@ -141,7 +150,7 @@ function statusLine() {
   }
   if (!snap.blips || snap.blips.length === 0) return 'NOTHING UP';
   const b = snap.blips[0];
-  const el = Math.round(90 - b.r * 90);
+  const el = Math.round(b.el);
   return (b.name.split(' ')[0] + ' ' + el + 'DEG').slice(0, 20);
 }
 

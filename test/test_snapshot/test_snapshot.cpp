@@ -32,12 +32,14 @@ static bool wellFormed(const std::string& j) {
     return curly == 0 && square == 0 && !inStr;
 }
 
-static Blip makeBlip(int id, const char* name, double r, bool vis) {
+static Blip makeBlip(int id, const char* name, double r, bool vis,
+                      double elevationDeg = 45.0) {
     Blip b;
     b.id = id;
     b.name = name;
     b.r = r;
     b.theta = 142.3;
+    b.elevationDeg = elevationDeg;
     b.magnitude = -3.1;
     b.visible = vis;
     return b;
@@ -96,6 +98,32 @@ void test_json_escapes_quotes_in_names(void) {
     TEST_ASSERT_TRUE(contains(j, "BAD\\\"NAME"));
 }
 
+void test_json_emits_elevation_field(void) {
+    Snapshot s;
+    s.status = ScopeStatus::Ok;
+    s.blips.push_back(makeBlip(25544, "ISS (ZARYA)", 0.58, true, 37.5));
+    const std::string j = toJson(s);
+    TEST_ASSERT_TRUE(contains(j, "\"el\":37.50"));
+}
+
+void test_json_emits_rings_array(void) {
+    // A freshly-constructed Snapshot carries the core's default elevation
+    // rings (60/30 grid, 10 floor, 0 horizon) - this exercises the
+    // multi-element rings array through the existing wellFormed() structural
+    // check, and pins the two kinds a renderer needs to tell apart.
+    Snapshot s;
+    s.status = ScopeStatus::Ok;
+    TEST_ASSERT_TRUE(s.rings.size() >= 4);
+
+    const std::string j = toJson(s);
+    TEST_ASSERT_TRUE(wellFormed(j));
+    TEST_ASSERT_TRUE(contains(j, "\"rings\":["));
+    TEST_ASSERT_TRUE(contains(j, "\"el\":60"));
+    TEST_ASSERT_TRUE(contains(j, "\"el\":30"));
+    TEST_ASSERT_TRUE(contains(j, "\"kind\":\"floor\""));
+    TEST_ASSERT_TRUE(contains(j, "\"kind\":\"horizon\""));
+}
+
 void test_json_empty_snapshot_is_well_formed(void) {
     Snapshot s;
     s.status = ScopeStatus::Ok;
@@ -150,13 +178,39 @@ void test_rank_orders_by_elevation_within_a_group(void) {
     TEST_ASSERT_EQUAL_INT(2, s.blips[0].id);
 }
 
+// "The core ranks and truncates; renderers never decide what matters" is the
+// most explicitly stated constraint on this branch. A truncate-BEFORE-sort
+// implementation would pass a same-size-only assertion just as easily as the
+// correct truncate-AFTER-sort one, so this pins the actual survivors, not
+// just the count.
+//
+// The 35 hidden blips are pushed FIRST and the 5 visible ones LAST, and every
+// blip has a distinct r. That ordering matters: if resize() ran before
+// stable_sort(), "the first 12 pushed" would be 12 hidden objects and zero
+// visible ones - a completely different (and wrong) set from what ranking
+// should produce (all 5 visible, then the 7 lowest-r hidden). A bug that
+// truncates first can't hide behind push order here.
 void test_rank_caps_at_max_blips(void) {
     Snapshot s;
-    for (int i = 0; i < 40; ++i) {
-        s.blips.push_back(makeBlip(i, "OBJ", 0.5, false));
+    for (int i = 0; i < 35; ++i) {
+        s.blips.push_back(makeBlip(2000 + i, "HID", 0.51 + 0.01 * i, false));
     }
+    for (int i = 0; i < 5; ++i) {
+        s.blips.push_back(makeBlip(1000 + i, "VIS", 0.10 + 0.10 * i, true));
+    }
+
     rankAndCap(s);
+
     TEST_ASSERT_EQUAL_INT(MAX_BLIPS, static_cast<int>(s.blips.size()));
+
+    // All 5 visible objects survive, ranked first, ascending by r.
+    for (int i = 0; i < 5; ++i) {
+        TEST_ASSERT_EQUAL_INT(1000 + i, s.blips[i].id);
+    }
+    // Then the 7 lowest-r hidden objects, also ascending by r.
+    for (int i = 0; i < 7; ++i) {
+        TEST_ASSERT_EQUAL_INT(2000 + i, s.blips[5 + i].id);
+    }
 }
 
 void test_rank_leaves_short_lists_alone(void) {
@@ -176,6 +230,8 @@ int main(int, char**) {
     RUN_TEST(test_json_emits_blip_fields);
     RUN_TEST(test_json_empty_blips_is_valid_array);
     RUN_TEST(test_json_escapes_quotes_in_names);
+    RUN_TEST(test_json_emits_elevation_field);
+    RUN_TEST(test_json_emits_rings_array);
     RUN_TEST(test_json_empty_snapshot_is_well_formed);
     RUN_TEST(test_json_single_blip_is_well_formed);
     RUN_TEST(test_json_with_multiple_blips_and_trails);

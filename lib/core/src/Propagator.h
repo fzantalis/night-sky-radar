@@ -19,6 +19,14 @@ namespace libsgp4 { class SGP4; class Tle; }
 //
 // The library signals errors by throwing; this class catches everything and
 // converts it to a false return. No exception escapes.
+//
+// NOT THREAD-SAFE. The vendored libsgp4::SGP4::FindPosition() is declared
+// const while holding a mutable IntegratorParams struct that it writes
+// through on every call - it mutates state behind a const-qualified API.
+// positionAt() is therefore deliberately NOT const here either: a const
+// Propagator& is exactly what looks safe to hand to another task, and it is
+// not. One Propagator instance per task; never share one across tasks, and
+// never call positionAt() on the same instance concurrently from two tasks.
 class Propagator {
 public:
     Propagator();
@@ -31,7 +39,8 @@ public:
     bool init(const Tle& tle);
 
     // Returns false if propagation fails. `posKm` is left untouched then.
-    bool positionAt(int64_t unixSeconds, Vec3& posKm) const;
+    // Not const - see the thread-safety note on the class above.
+    bool positionAt(int64_t unixSeconds, Vec3& posKm);
 
     double epochJd() const { return epochJd_; }
     bool   ready()   const { return ready_; }

@@ -30,4 +30,9 @@ void loop() {
     net::loop();
     scope::loop();
     httpapi::loop();
+
+    // All three return promptly, so without this loop() spins at 100% on
+    // core 1 and permanently starves the idle task (watchdog feed, RTOS
+    // bookkeeping) and, at M2, any low-priority task pinned to this core.
+    delay(1);
 }
