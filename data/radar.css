@@ -28,3 +28,33 @@ html, body {
 }
 
 #hint { opacity: 0.45; letter-spacing: 0.06em; }
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 320px;
+}
+
+form h1 { font-size: 14px; font-weight: normal; letter-spacing: 0.08em; margin: 0; }
+form label { display: flex; flex-direction: column; gap: 4px; }
+form small { opacity: 0.55; }
+
+form input {
+  background: #17090a;
+  border: 1px solid #3a1210;
+  color: #c9503c;
+  font: inherit;
+  padding: 7px 9px;
+}
+
+form button {
+  background: #3a1210;
+  border: 1px solid #6b241d;
+  color: #c9503c;
+  font: inherit;
+  padding: 9px;
+  cursor: pointer;
+}
+
+form a { color: #c9503c; opacity: 0.6; text-align: center; }

@@ -14,10 +14,6 @@ void setup() {
 
     config::begin();
 
-    // TEMPORARY placeholder for verification only - Task 11 replaces this with
-    // the /config form. These are NOT the user's real coordinates.
-    config::setObserver(Observer{37.9838, 23.7275, 0.100});
-
     net::begin();
 
     // httpapi::begin() mounts LittleFS; scope::begin() needs that filesystem

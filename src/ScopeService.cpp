@@ -204,4 +204,8 @@ Snapshot build() {
     return s;
 }
 
+void clearTrails() {
+    trails.clear();
+}
+
 }  // namespace scope

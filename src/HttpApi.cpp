@@ -3,6 +3,10 @@
 #include <Arduino.h>
 #include <LittleFS.h>
 #include <WebServer.h>
+#include <cstdio>
+
+#include "Config.h"
+#include "ScopeService.h"
 
 namespace {
 
@@ -27,6 +31,43 @@ bool serveStatic(const String& path, const char* mime) {
     return true;
 }
 
+void handleConfigGet() {
+    const Observer o = config::observer();
+    char buf[128];
+    if (config::hasLocation()) {
+        std::snprintf(buf, sizeof(buf),
+                      "{\"lat\":%.6f,\"lon\":%.6f,\"alt\":%.4f}",
+                      o.latDeg, o.lonDeg, o.altKm);
+    } else {
+        std::snprintf(buf, sizeof(buf), "{}");
+    }
+    server.send(200, "application/json", buf);
+}
+
+void handleConfigPost() {
+    if (!server.hasArg("lat") || !server.hasArg("lon") || !server.hasArg("alt")) {
+        server.send(400, "text/plain", "missing lat, lon or alt");
+        return;
+    }
+
+    const double lat = server.arg("lat").toDouble();
+    const double lon = server.arg("lon").toDouble();
+    const double alt = server.arg("alt").toDouble();
+
+    // Reject out-of-range values rather than storing a position that would
+    // silently produce a wrong sky.
+    if (lat < -90.0 || lat > 90.0)    { server.send(400, "text/plain", "lat out of range"); return; }
+    if (lon < -180.0 || lon > 180.0)  { server.send(400, "text/plain", "lon out of range"); return; }
+    if (alt < -0.5 || alt > 9.0)      { server.send(400, "text/plain", "alt out of range (km)"); return; }
+
+    config::setObserver(Observer{lat, lon, alt});
+    scope::clearTrails();
+    Serial.printf("[cfg] observer set to %.4f, %.4f, %.3f km\n", lat, lon, alt);
+
+    server.sendHeader("Location", "/");
+    server.send(303, "text/plain", "saved");
+}
+
 }  // namespace
 
 namespace httpapi {
@@ -43,6 +84,9 @@ void begin(SnapshotProvider provider) {
     server.on("/radar.css", []() { if (!serveStatic("/radar.css",  "text/css"))        server.send(404, "text/plain", "not found"); });
     server.on("/radar.js",  []() { if (!serveStatic("/radar.js",   "application/javascript")) server.send(404, "text/plain", "not found"); });
     server.on("/api/scope", handleScope);
+    server.on("/config",     []() { if (!serveStatic("/config.html", "text/html")) server.send(404, "text/plain", "not found"); });
+    server.on("/api/config", HTTP_GET,  handleConfigGet);
+    server.on("/api/config", HTTP_POST, handleConfigPost);
 
     server.onNotFound([]() { server.send(404, "text/plain", "not found"); });
 

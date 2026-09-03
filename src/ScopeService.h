@@ -11,4 +11,8 @@ void loop();
 
 Snapshot build();
 
+// Discards all position history. Call when the observer location changes - existing
+// trail points were computed for the old site and are meaningless for the new one.
+void clearTrails();
+
 }  // namespace scope

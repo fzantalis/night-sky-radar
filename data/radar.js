@@ -136,7 +136,7 @@ function statusLine() {
   if (!snap) return 'CONNECTING';       // still within the initial grace period
   switch (snap.status) {
     case 'no_time':     return 'NO TIME';
-    case 'no_location': return 'SET LOCATION';
+    case 'no_location': return 'OPEN /CONFIG';
     case 'offline':     return 'OFFLINE';
   }
   if (!snap.blips || snap.blips.length === 0) return 'NOTHING UP';
@@ -182,3 +182,9 @@ async function poll() {
 setInterval(poll, 1000);
 poll();
 requestAnimationFrame(frame);
+
+// The panel has no touch input; this is a simulator-only convenience so the
+// setup state is not a dead end in the browser.
+cv.addEventListener('click', () => {
+  if (snap && snap.status === 'no_location') window.location.href = '/config';
+});

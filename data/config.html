@@ -1,0 +1,28 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sky Radar &mdash; location</title>
+<link rel="stylesheet" href="/radar.css">
+<form id="f" method="POST" action="/api/config">
+  <h1>Observer location</h1>
+  <label>Latitude <small>&minus;90 to 90, north positive</small>
+    <input name="lat" type="number" step="any" min="-90" max="90" required>
+  </label>
+  <label>Longitude <small>&minus;180 to 180, <b>east positive</b></small>
+    <input name="lon" type="number" step="any" min="-180" max="180" required>
+  </label>
+  <label>Altitude <small>kilometres above sea level, e.g. 0.1</small>
+    <input name="alt" type="number" step="any" min="-0.5" max="9" required>
+  </label>
+  <button type="submit">Save</button>
+  <a href="/">back to radar</a>
+</form>
+<script>
+fetch('/api/scope').then(r => r.json()).catch(() => null);
+fetch('/api/config').then(r => r.json()).then(c => {
+  if (!c) return;
+  for (const k of ['lat', 'lon', 'alt']) {
+    if (typeof c[k] === 'number') document.querySelector('[name=' + k + ']').value = c[k];
+  }
+}).catch(() => {});
+</script>
