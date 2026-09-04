@@ -3,3 +3,5 @@
 src/secrets.h
 *.bin
 *.elf
+tools/.n2yo_key
+test/fixtures/n2yo_*.txt
