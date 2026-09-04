@@ -1,0 +1,60 @@
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #0a0708;
+  color: #c9503c;
+  font: 12px/1.4 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+
+#wrap {
+  width: 720px;
+  height: 720px;
+  border-radius: 50%;
+  overflow: hidden;
+  box-shadow: 0 0 0 6px #17090a, 0 0 40px #000;
+}
+
+/* 3x nearest-neighbour scaling so the browser shows the panel's real aliasing. */
+#scope {
+  width: 720px;
+  height: 720px;
+  image-rendering: pixelated;
+  display: block;
+}
+
+#hint { opacity: 0.45; letter-spacing: 0.06em; }
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 320px;
+}
+
+form h1 { font-size: 14px; font-weight: normal; letter-spacing: 0.08em; margin: 0; }
+form label { display: flex; flex-direction: column; gap: 4px; }
+form small { opacity: 0.55; }
+
+form input {
+  background: #17090a;
+  border: 1px solid #3a1210;
+  color: #c9503c;
+  font: inherit;
+  padding: 7px 9px;
+}
+
+form button {
+  background: #3a1210;
+  border: 1px solid #6b241d;
+  color: #c9503c;
+  font: inherit;
+  padding: 9px;
+  cursor: pointer;
+}
+
+form a { color: #c9503c; opacity: 0.6; text-align: center; }

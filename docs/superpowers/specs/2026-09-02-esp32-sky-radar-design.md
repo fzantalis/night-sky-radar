@@ -101,7 +101,9 @@ This makes the magnetometer a swappable upgrade rather than a dependency.
 
 PlatformIO with two environments: `esp32-s3-devkitc-1` (Arduino framework) for `firmware/`, and `native` for `core/` tests.
 
-SGP4: vendor **Vallado's reference implementation** rather than an Arduino-specific wrapper. It is the canonical implementation, is plain C++ with no platform dependencies, and drops directly into the natively-testable core.
+SGP4: vendor **dnwrnr/sgp4 (Apache-2.0)** rather than an Arduino-specific wrapper. It is plain C++ with no platform dependencies and drops directly into the natively-testable core.
+
+Vallado's own reference implementation was the first choice, but CelesTrak now distributes it under **AGPL-3.0**, whose section 13 network clause would require the entire project to be AGPL once published. Correctness is still verified against Vallado's published test vectors, which are numerical data rather than code. Note that dnwrnr/sgp4 signals errors by throwing, so both build environments must enable C++ exceptions and the `Propagator` wrapper must ensure none escape.
 
 ## 4. Data sources
 
@@ -265,7 +267,7 @@ Two hardware notes recorded now so they are not forgotten at purchase time:
 
 These are verification tasks, not undecided design questions:
 
-1. Confirm the current availability and licence of Vallado's reference SGP4 source before vendoring it.
+1. ~~Confirm the licence of Vallado's reference SGP4.~~ **Resolved 2026-09-02:** it is AGPL-3.0, which was rejected; the project vendors dnwrnr/sgp4 (Apache-2.0) instead.
 2. Pin down the exact apparent-magnitude formula constants and phase-factor form against reference sources; lock in by unit test.
 3. Confirm the current source and licence of the McCants/Molczan standard magnitude table before bundling it.
 4. Confirm magnetic declination for the observer's actual location at M7 time.
