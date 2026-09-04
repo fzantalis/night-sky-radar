@@ -180,6 +180,48 @@ void test_object_due_east_at_midlatitude_with_nonzero_lst(void) {
     TEST_ASSERT_TRUE(la.elDeg > 0.0 && la.elDeg < 90.0);
 }
 
+void test_zenith_sweep_elevation_is_finite_and_near_90(void) {
+    // rZ (a 3-term SEZ sum) and rangeKm (a separate sqrt of a dot product)
+    // are independent floating-point computations that are only
+    // *mathematically* guaranteed to satisfy |rZ| <= rangeKm. At zenith the
+    // ratio rZ/rangeKm sits right at the edge of asin's domain, so this is
+    // exactly the geometry where a rounding-induced ratio > 1.0 would turn
+    // into a NaN elevation if asin() were not clamped. Sweep a spread of
+    // latitudes and GMST values with the satellite placed exactly along the
+    // site's local vertical and confirm elDeg stays finite and close to 90
+    // degrees throughout - a meaningful geometric check in its own right,
+    // independent of the clamp.
+    //
+    // Note: the site's local vertical (the SEZ Z axis, normal to the WGS84
+    // ellipsoid at the observer's geodetic latitude) is NOT the same as
+    // site.unit() - the geocentric direction from Earth's center to the site
+    // - except exactly at the equator or the poles, because the ellipsoid is
+    // flattened. So "up" is constructed independently here from geodetic
+    // latitude/LST, the same way local east is built independently in
+    // test_object_due_east_at_midlatitude_with_nonzero_lst above, rather than
+    // reused from siteEci()'s own math.
+    constexpr double PI = 3.14159265358979323846;
+    constexpr double DEG2RAD = PI / 180.0;
+
+    const double lats[] = {0.0, 45.0, -45.0, 89.0, -89.0};
+    for (double lat : lats) {
+        Observer obs{lat, 12.3, 0.05};
+        const double latRad = lat * DEG2RAD;
+        for (double gmst = 0.0; gmst < 360.0; gmst += 23.0) {
+            const double lstRad = (gmst + obs.lonDeg) * DEG2RAD;
+            Vec3 up{std::cos(latRad) * std::cos(lstRad),
+                     std::cos(latRad) * std::sin(lstRad),
+                     std::sin(latRad)};
+
+            Vec3 site = siteEci(obs, gmst);
+            Vec3 sat  = site + up * 550.0;  // straight up along local vertical
+            LookAngles la = look(sat, obs, gmst);
+            TEST_ASSERT_TRUE(std::isfinite(la.elDeg));
+            TEST_ASSERT_DOUBLE_WITHIN(0.01, 90.0, la.elDeg);
+        }
+    }
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_site_at_equator_prime_meridian_zero_gmst);
@@ -198,5 +240,6 @@ int main(int, char**) {
     RUN_TEST(test_object_over_north_pole_is_still_due_north_from_southern_hemisphere);
     RUN_TEST(test_object_over_south_pole_is_due_south_from_northern_hemisphere);
     RUN_TEST(test_object_due_east_at_midlatitude_with_nonzero_lst);
+    RUN_TEST(test_zenith_sweep_elevation_is_finite_and_near_90);
     return UNITY_END();
 }

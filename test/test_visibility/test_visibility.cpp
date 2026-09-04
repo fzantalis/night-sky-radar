@@ -58,6 +58,21 @@ void test_eclipsed_satellite_is_rejected(void) {
                           static_cast<int>(v.reason));
 }
 
+void test_daylight_beats_eclipsed_when_both_hold(void) {
+    // Every other test isolates exactly one failing condition, so nothing
+    // pins the relative order of the darkness and illumination gates: a
+    // shadowed satellite in full daylight, with elevation passing, must be
+    // reported as Daylight (darkness gate runs first), not Eclipsed. If the
+    // two gates were swapped in judge(), this would be the only test to
+    // notice.
+    Vec3 shadowed{-6778.0, 0.0, 0.0};   // squarely in the shadow cylinder,
+                                        // same fixture as test_eclipsed_satellite_is_rejected
+    Verdict v = judge(goodLook(), shadowed, SUN, SITE, /*sunAltDeg=*/10.0, -1.8);
+    TEST_ASSERT_FALSE(v.visible);
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(VisReason::Daylight),
+                          static_cast<int>(v.reason));
+}
+
 void test_too_dim_is_rejected(void) {
     Verdict v = judge(goodLook(), SAT, SUN, SITE, -14.0, 9.0);
     TEST_ASSERT_FALSE(v.visible);
@@ -100,6 +115,7 @@ int main(int, char**) {
     RUN_TEST(test_daylight_is_rejected);
     RUN_TEST(test_civil_twilight_boundary_is_rejected);
     RUN_TEST(test_eclipsed_satellite_is_rejected);
+    RUN_TEST(test_daylight_beats_eclipsed_when_both_hold);
     RUN_TEST(test_too_dim_is_rejected);
     RUN_TEST(test_magnitude_is_reported_even_when_rejected);
     RUN_TEST(test_horizon_check_precedes_everything);
