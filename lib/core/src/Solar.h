@@ -6,7 +6,9 @@
 
 // Geocentric position of the Sun in kilometres, in the same equatorial frame
 // the propagator outputs. Uses the low-precision Astronomical Almanac series,
-// good to roughly 0.01 degrees - far better than this application needs.
+// good to roughly 0.01 degrees - far better than this application needs. The
+// series yields true-equator/true-equinox-of-date coordinates, which at this
+// precision are treated as TEME-compatible with the propagator's output.
 Vec3 sunEci(double jd);
 
 double sunDeclinationDeg(double jd);
