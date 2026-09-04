@@ -24,6 +24,7 @@ struct Blip {
     double      elevationDeg = 0.0;   // degrees above horizon; r is derived from this via skyRadius()
     double      magnitude    = 99.0;
     bool        visible      = false; // reserved for M2; always false at M1
+    std::string reason;    // visibility verdict reason, for debugging
     std::vector<std::pair<double, double>> trail;  // (r, theta) history
 };
 
@@ -49,6 +50,7 @@ struct Snapshot {
     double      tleAgeHours  = -1.0;   // negative means unknown
     std::vector<Blip> blips;
     std::vector<Ring> rings  = defaultSkyRings();
+    double      sunAltDeg    = 0.0;
 };
 
 // Sorts visible objects first, then by ascending r (higher in the sky first),

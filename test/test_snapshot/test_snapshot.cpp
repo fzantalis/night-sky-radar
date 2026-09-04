@@ -221,6 +221,22 @@ void test_rank_leaves_short_lists_alone(void) {
     TEST_ASSERT_EQUAL_INT(2, static_cast<int>(s.blips.size()));
 }
 
+void test_json_reports_sun_altitude(void) {
+    Snapshot s;
+    s.status = ScopeStatus::Ok;
+    s.sunAltDeg = -12.75;
+    TEST_ASSERT_TRUE(contains(toJson(s), "\"sunAltDeg\":-12.75"));
+}
+
+void test_json_reports_blip_reason(void) {
+    Snapshot s;
+    s.status = ScopeStatus::Ok;
+    Blip b = makeBlip(25544, "ISS", 0.5, false);
+    b.reason = "eclipsed";
+    s.blips.push_back(b);
+    TEST_ASSERT_TRUE(contains(toJson(s), "\"reason\":\"eclipsed\""));
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_json_reports_timestamp_and_status);
@@ -239,5 +255,7 @@ int main(int, char**) {
     RUN_TEST(test_rank_orders_by_elevation_within_a_group);
     RUN_TEST(test_rank_caps_at_max_blips);
     RUN_TEST(test_rank_leaves_short_lists_alone);
+    RUN_TEST(test_json_reports_sun_altitude);
+    RUN_TEST(test_json_reports_blip_reason);
     return UNITY_END();
 }

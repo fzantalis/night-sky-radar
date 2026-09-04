@@ -76,6 +76,8 @@ std::string toJson(const Snapshot& s) {
     j += statusName(s.status);
     j += "\",\"tleAgeHours\":";
     j += num(s.tleAgeHours, 2);
+    j += ",\"sunAltDeg\":";
+    j += num(s.sunAltDeg, 2);
     j += ",\"blips\":[";
 
     for (size_t i = 0; i < s.blips.size(); ++i) {
@@ -95,6 +97,9 @@ std::string toJson(const Snapshot& s) {
         j += num(b.magnitude, 2);
         j += ",\"visible\":";
         j += (b.visible ? "true" : "false");
+        j += ",\"reason\":\"";
+        j += escape(b.reason);
+        j += '"';
         j += ",\"trail\":[";
         for (size_t k = 0; k < b.trail.size(); ++k) {
             if (k > 0) j += ',';

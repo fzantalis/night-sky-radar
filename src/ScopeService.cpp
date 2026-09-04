@@ -15,9 +15,12 @@
 
 #include "Projection.h"
 #include "Propagator.h"
+#include "Solar.h"
+#include "StdMagTable.h"
 #include "TimeUtils.h"
 #include "TleCount.h"
 #include "Topocentric.h"
+#include "Visibility.h"
 
 namespace {
 
@@ -294,6 +297,15 @@ Snapshot build() {
     const Observer obs  = config::observer();
     const double   gmst = timeutils::gmstDegrees(timeutils::julianDate(s.t));
 
+    // These depend only on the instant, not on any individual tracked object,
+    // so compute them once per snapshot rather than once per blip (up to ~200
+    // objects) - recomputing solar position per object is pure waste on a
+    // synchronous web server.
+    const Vec3   sun       = sunEci(timeutils::julianDate(s.t));
+    const Vec3   site      = siteEci(obs, gmst);
+    const double sunAltDeg = sunAltitudeDeg(obs, s.t);
+    s.sunAltDeg = sunAltDeg;
+
     // Propagator::positionAt is non-const (see Propagator.h), so this must
     // bind non-const.
     for (Tracked& tr : tracked) {
@@ -309,8 +321,12 @@ Snapshot build() {
         b.r            = skyRadius(la.elDeg);
         b.theta        = la.azDeg;
         b.elevationDeg = la.elDeg;
-        b.magnitude    = 99.0;    // M2 computes this
-        b.visible      = false;   // M2 computes this
+
+        const Verdict v = judge(la, pos, sun, site, sunAltDeg,
+                                 stdMagFor(tr.tle.satnum));
+        b.magnitude = v.magnitude;
+        b.visible   = v.visible;
+        b.reason    = visReasonName(v.reason);
 
         auto it = trails.find(tr.tle.satnum);
         if (it != trails.end()) {
