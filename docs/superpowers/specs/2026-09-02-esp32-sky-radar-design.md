@@ -26,7 +26,15 @@ Hardware target is an ESP32-S3-DevKitC-1 N16R8 (16 MB flash, 8 MB octal PSRAM). 
 
 ### Deferred, but the architecture must not preclude them
 
-- **M3** Starlink train detection — stream-filter the ~8000-object `starlink` group by COSPAR launch designator, keeping only launches from the last ~14 days
+- **M3** Starlink train detection — stream-filter the ~8000-object `starlink` group.
+  **Corrected 2026-09-04:** the original wording said to filter by COSPAR launch
+  designator, keeping launches from the last ~14 days. That is not implementable — a
+  designator encodes the launch YEAR and the Nth launch of that year, never a date.
+  The physically correct discriminator is **mean motion**: a fresh batch sits near
+  350 km and is still raising orbit (~15.6 rev/day) while operational Starlinks sit
+  at ~550 km (~15.06). Low and clustered is exactly what makes a train visible, and
+  low is what mean motion measures. The designator remains useful as a grouping key
+  for members of one launch.
 - **M4** Meteor shower radiants — static almanac, rendered as a glowing sector
 - **M5** NEO mode — JPL CAD API, Earth-centred, 10 lunar distances at the rim, time-scrubbed over 30 days rather than rendered live
 - **M6** GC9A01 renderer — gated on buying the panel
