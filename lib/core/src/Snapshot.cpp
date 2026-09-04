@@ -100,6 +100,13 @@ std::string toJson(const Snapshot& s) {
         j += ",\"reason\":\"";
         j += escape(b.reason);
         j += '"';
+        j += ",\"kind\":\"";
+        j += escape(b.kind);
+        j += '"';
+        j += ",\"launchYear\":";
+        j += std::to_string(b.launchYear);
+        j += ",\"launchNumber\":";
+        j += std::to_string(b.launchNumber);
         j += ",\"trail\":[";
         for (size_t k = 0; k < b.trail.size(); ++k) {
             if (k > 0) j += ',';

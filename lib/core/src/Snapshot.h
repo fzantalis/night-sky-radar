@@ -26,6 +26,20 @@ struct Blip {
     bool        visible      = false; // reserved for M2; always false at M1
     std::string reason;    // visibility verdict reason, for debugging
     std::vector<std::pair<double, double>> trail;  // (r, theta) history
+
+    // M3: "sat" for everything tracked before this milestone; "train" for a
+    // member of a freshly-launched Starlink batch (see TrainFilter.h). The
+    // renderer uses this to draw trains as a group rather than as unrelated
+    // dots, instead of guessing from the name string.
+    std::string kind         = "sat";
+
+    // COSPAR launch designator pieces, straight from Tle::launchYear/
+    // launchNumber - populated for every blip, not just trains, since the
+    // core already has them. This is what lets a renderer group train
+    // members under their shared launch rather than listing every one as an
+    // unrelated row.
+    int         launchYear   = 0;
+    int         launchNumber = 0;
 };
 
 // One elevation ring the chrome draws around the dial. `r` is the projected

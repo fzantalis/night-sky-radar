@@ -3,6 +3,7 @@
 
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <cstring>
 
 namespace {
 
@@ -211,6 +212,116 @@ bool fetchGroup(const char* group, String& outRaw) {
     return true;
 }
 
+// Streams a CelesTrak group without ever holding the whole body. See the
+// declaration in TleFetcher.h for the full contract.
+int fetchGroupStreaming(const char* group, TleFilter keep, std::vector<Tle>& out,
+                        int maxKeep, int* totalParsed, uint32_t* minFreeHeapOut) {
+    out.clear();
+    if (totalParsed) *totalParsed = 0;
+
+    uint32_t minFreeHeap = ESP.getFreeHeap();
+    auto trackHeap = [&]() {
+        const uint32_t free = ESP.getFreeHeap();
+        if (free < minFreeHeap) minFreeHeap = free;
+    };
+
+    String url = "https://celestrak.org/NORAD/elements/gp.php?GROUP=";
+    url += group;
+    url += "&FORMAT=tle";
+
+    int accepted = 0;
+    int seenTriples = 0;
+
+    {
+        WiFiClientSecure client;
+        client.setCACert(kTrustedRootsPem);
+        client.setTimeout(15000);
+
+        HTTPClient http;
+        http.setConnectTimeout(15000);
+        http.setTimeout(15000);
+        http.setUserAgent("esp32-sky-radar/0.1");
+
+        if (!http.begin(client, url)) {
+            Serial.println("[tle] streaming http begin failed");
+            return -1;
+        }
+
+        const int code = http.GET();
+        if (code != HTTP_CODE_OK) {
+            Serial.printf("[tle] streaming GET failed, code %d\n", code);
+            http.end();
+            return -1;
+        }
+
+        trackHeap();
+
+        WiFiClient* stream = http.getStreamPtr();
+        const long contentLen = http.getSize();   // -1 if unknown/chunked
+
+        // Bounded per-line buffer: a TLE line is 69 columns, a name at most
+        // 24. 160 bytes is generous headroom without ever approaching the
+        // ~1.7 MB the whole body would take. Nothing larger than one line is
+        // ever resident, and nothing larger than one three-line element set
+        // (triple[3]) is ever held across iterations.
+        constexpr size_t kLineBufSize = 160;
+        char lineBuf[kLineBufSize];
+        char triple[3][kLineBufSize];
+        int held = 0;
+        long totalRead = 0;
+
+        for (;;) {
+            if (contentLen >= 0 && totalRead >= contentLen) break;   // consumed the declared body
+            if (!http.connected() && !stream->available()) break;    // socket closed, nothing buffered
+
+            const int n = static_cast<int>(stream->readBytesUntil('\n', lineBuf, kLineBufSize - 1));
+            if (n <= 0) {
+                if (!http.connected()) break;   // genuinely done, not just a brief stall
+                continue;
+            }
+            totalRead += static_cast<long>(n) + 1;
+            lineBuf[n] = '\0';
+
+            // Trim a trailing '\r' and any padding, same as parseTleText().
+            int end = n;
+            while (end > 0 && (lineBuf[end - 1] == '\r' || lineBuf[end - 1] == ' ')) end--;
+            lineBuf[end] = '\0';
+            int start = 0;
+            while (lineBuf[start] == ' ') start++;
+            if (start >= end) { trackHeap(); continue; }   // blank line between triples
+
+            std::strncpy(triple[held], lineBuf + start, kLineBufSize - 1);
+            triple[held][kLineBufSize - 1] = '\0';
+            held++;
+            if (held < 3) { trackHeap(); continue; }
+
+            held = 0;
+            Tle t;
+            if (parseTle(triple[0], triple[1], triple[2], t)) {
+                seenTriples++;
+                if (keep(t) && static_cast<int>(out.size()) < maxKeep) {
+                    out.push_back(t);
+                    accepted++;
+                }
+            } else {
+                Serial.printf("[tle] streaming skipped malformed entry: %s\n", triple[0]);
+            }
+            trackHeap();
+        }
+
+        http.end();
+    }
+
+    if (totalParsed) *totalParsed = seenTriples;
+    if (minFreeHeapOut) *minFreeHeapOut = minFreeHeap;
+
+    Serial.printf("[tle] streaming fetch of '%s': %d triple(s) parsed, %d kept, "
+                  "min free heap %u bytes\n",
+                  group, seenTriples, accepted, static_cast<unsigned>(minFreeHeap));
+
+    return accepted;
+}
+
 }  // namespace tlefetcher
 
 int parseTleText(const String& raw, std::vector<Tle>& out, int maxCount) {
@@ -221,9 +332,15 @@ int parseTleText(const String& raw, std::vector<Tle>& out, int maxCount) {
     int held = 0;
     int i = 0;
 
-    // Walk the buffer one line at a time, holding at most three lines. Nothing
-    // larger than a single element set is ever resident, which is what makes the
-    // 1.2 MB Starlink group tractable at M3.
+    // Walk the buffer one line at a time, holding at most three lines. This
+    // does NOT make the whole body cheap - `raw` is already fully resident by
+    // the time this runs, since fetchGroup() (the only caller for `stations`/
+    // `visual`) reads the whole response into one Arduino String first. That
+    // is fine for those two groups (~4 KB / ~22 KB) but is exactly why the
+    // ~1.7 MB `starlink` group needs fetchGroupStreaming() instead, which
+    // never materialises the body at all. A previous comment here claimed
+    // this function was what made Starlink tractable; it was not - a
+    // reviewer flagged it during M0-M1, and it is corrected here at M3.
     while (i < n && static_cast<int>(out.size()) < maxCount) {
         int nl = raw.indexOf('\n', i);
         if (nl < 0) nl = n;

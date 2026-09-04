@@ -237,6 +237,28 @@ void test_json_reports_blip_reason(void) {
     TEST_ASSERT_TRUE(contains(toJson(s), "\"reason\":\"eclipsed\""));
 }
 
+void test_json_blip_kind_defaults_to_sat(void) {
+    Snapshot s;
+    s.status = ScopeStatus::Ok;
+    s.blips.push_back(makeBlip(25544, "ISS (ZARYA)", 0.5, true));
+    TEST_ASSERT_TRUE(contains(toJson(s), "\"kind\":\"sat\""));
+}
+
+void test_json_blip_kind_train(void) {
+    Snapshot s;
+    s.status = ScopeStatus::Ok;
+    Blip b = makeBlip(60001, "STARLINK-38024", 0.4, false);
+    b.kind = "train";
+    b.launchYear = 2026;
+    b.launchNumber = 159;
+    s.blips.push_back(b);
+    const std::string j = toJson(s);
+    TEST_ASSERT_TRUE(contains(j, "\"kind\":\"train\""));
+    TEST_ASSERT_TRUE(contains(j, "\"launchYear\":2026"));
+    TEST_ASSERT_TRUE(contains(j, "\"launchNumber\":159"));
+    TEST_ASSERT_TRUE(wellFormed(j));
+}
+
 void test_json_empty_events_is_valid_array(void) {
     Snapshot s;
     s.status = ScopeStatus::Ok;
@@ -277,6 +299,8 @@ int main(int, char**) {
     RUN_TEST(test_rank_leaves_short_lists_alone);
     RUN_TEST(test_json_reports_sun_altitude);
     RUN_TEST(test_json_reports_blip_reason);
+    RUN_TEST(test_json_blip_kind_defaults_to_sat);
+    RUN_TEST(test_json_blip_kind_train);
     RUN_TEST(test_json_empty_events_is_valid_array);
     RUN_TEST(test_json_emits_event_fields);
     return UNITY_END();
