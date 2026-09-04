@@ -105,6 +105,42 @@ function blipRadius(mag) {
   return Math.max(1.5, Math.min(4.5, 3.2 - mag * 0.45));
 }
 
+// Starlink trains (M3): a fresh batch is still flying in formation, so what
+// makes one worth showing is that several blips move together as a line -
+// draw a thin connector through them, sorted by elevation radius so it reads
+// as the order they cross the sky in, rather than as scattered dots that
+// happen to share a colour. Still deep-red/cyan per the existing palette;
+// #d8f4ff stays reserved for "visible right now" whether or not the blip is
+// a train member.
+function drawTrainConnector(members, dim) {
+  if (members.length < 2) return;
+  const sorted = [...members].sort((a, b) => a.r - b.r);
+  g.strokeStyle = P.text;
+  g.lineWidth = 1;
+  g.globalAlpha = dim * 0.35;
+  g.beginPath();
+  for (let i = 0; i < sorted.length; i++) {
+    const [x, y] = polar(sorted[i].r, sorted[i].theta);
+    if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+  }
+  g.stroke();
+  g.globalAlpha = 1;
+}
+
+// Train members draw as a small diamond rather than a circle - a distinct
+// glyph, not a distinct colour, so "visible right now" (#d8f4ff) still reads
+// as the one thing that's cyan.
+function drawTrainMarker(x, y, radius, colour) {
+  g.fillStyle = colour;
+  g.beginPath();
+  g.moveTo(x, y - radius);
+  g.lineTo(x + radius, y);
+  g.lineTo(x, y + radius);
+  g.lineTo(x - radius, y);
+  g.closePath();
+  g.fill();
+}
+
 function drawBlips() {
   if (!snap || !snap.blips) return;
 
@@ -112,8 +148,12 @@ function drawBlips() {
   // erasing it, just dimmed so it reads as stale rather than live.
   const dim = linkLost() ? 0.4 : 1;
 
+  const trainMembers = snap.blips.filter((b) => b.kind === 'train');
+  drawTrainConnector(trainMembers, dim);
+
   for (const b of snap.blips) {
     const colour = b.visible ? P.visible : P.text;
+    const isTrain = b.kind === 'train';
 
     if (b.trail) {
       for (let i = 0; i < b.trail.length; i++) {
@@ -129,11 +169,15 @@ function drawBlips() {
     }
 
     const [x, y] = polar(b.r, b.theta);
-    g.fillStyle = colour;
     g.globalAlpha = dim;
-    g.beginPath();
-    g.arc(x, y, blipRadius(b.mag), 0, Math.PI * 2);
-    g.fill();
+    if (isTrain) {
+      drawTrainMarker(x, y, blipRadius(b.mag) + 0.5, colour);
+    } else {
+      g.fillStyle = colour;
+      g.beginPath();
+      g.arc(x, y, blipRadius(b.mag), 0, Math.PI * 2);
+      g.fill();
+    }
     g.globalAlpha = 1;
   }
 }
@@ -214,10 +258,13 @@ function frame() {
 }
 
 // --- Roster: an HTML companion view below the canvas, entirely separate from
-// the panel simulation above. Every blip in the snapshot gets a row here even
-// though the panel itself can only ever narrate one of them at a time; this
-// is where "SL-14 47DEG" gets a name and the other eleven dots stop being
-// anonymous. No hover/click handling - it's a plain read-only table.
+// the panel simulation above. Every ordinary blip in the snapshot gets a row
+// here even though the panel itself can only ever narrate one of them at a
+// time; this is where "SL-14 47DEG" gets a name and the other eleven dots
+// stop being anonymous. Starlink train members (M3) are the one exception:
+// they collapse into a single "TRAIN <designator> x<N>" row (see
+// trainGroupRow() below) instead of one row per near-identical satellite.
+// No hover/click handling - it's a plain read-only table.
 
 const COMPASS16 = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE',
                     'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
@@ -247,6 +294,63 @@ function escapeHtml(s) {
   }[c]));
 }
 
+// One roster row for an ordinary blip.
+function satRow(b, activeId) {
+  // mag is the 99.00 sentinel except on the visible/too_dim paths (see
+  // Visibility.h) - anything else would just be showing "99" as if it
+  // meant something.
+  const magKnown = b.visible || b.reason === 'too_dim';
+  const magText = magKnown ? b.mag.toFixed(2) : '—';
+  const bearing = compassPoint(b.theta) + ' ' +
+    Math.round(((b.theta % 360) + 360) % 360);
+
+  const classes = ['roster-row'];
+  if (b.visible) classes.push('roster-visible');
+  if (b.id === activeId) classes.push('roster-active');
+
+  return '<tr class="' + classes.join(' ') + '">' +
+    '<td>' + escapeHtml(b.name) + '</td>' +
+    '<td>' + b.el.toFixed(1) + '&deg;</td>' +
+    '<td>' + bearing + '</td>' +
+    '<td>' + magText + '</td>' +
+    '<td>' + reasonText(b.reason) + '</td>' +
+    '</tr>';
+}
+
+// One roster row for a whole train, grouped under its launch designator
+// (e.g. "TRAIN 2026-159") rather than one row per member - a pass can put
+// most or all of a batch above the horizon at once, and sixty near-identical
+// "STARLINK-xxxxx" rows would bury everything else in the roster.
+function trainGroupRow(members, activeId) {
+  const first = members[0];
+  const designator = first.launchYear + '-' + String(first.launchNumber).padStart(3, '0');
+  const els = members.map((m) => m.el);
+  const elText = members.length > 1
+    ? Math.min(...els).toFixed(1) + '–' + Math.max(...els).toFixed(1) + '&deg;'
+    : els[0].toFixed(1) + '&deg;';
+
+  // Bearing of whichever member is currently highest, as a representative
+  // heading for the whole formation.
+  const highest = members.reduce((a, b) => (a.el >= b.el ? a : b));
+  const bearing = compassPoint(highest.theta) + ' ' +
+    Math.round(((highest.theta % 360) + 360) % 360);
+
+  const anyVisible = members.some((m) => m.visible);
+  const activeInGroup = members.some((m) => m.id === activeId);
+
+  const classes = ['roster-row'];
+  if (anyVisible) classes.push('roster-visible');
+  if (activeInGroup) classes.push('roster-active');
+
+  return '<tr class="' + classes.join(' ') + '">' +
+    '<td>TRAIN ' + escapeHtml(designator) + ' &times;' + members.length + '</td>' +
+    '<td>' + elText + '</td>' +
+    '<td>' + bearing + '</td>' +
+    '<td>—</td>' +
+    '<td>' + (anyVisible ? 'Visible' : 'Above horizon') + '</td>' +
+    '</tr>';
+}
+
 function renderRoster() {
   const body = document.getElementById('roster-body');
   if (!body) return;
@@ -259,27 +363,29 @@ function renderRoster() {
   const active = statusBlip();
   const activeId = active ? active.id : null;
 
-  let rows = '';
+  // Group train members by launch designator (year + launch number) so one
+  // launch's satellites collapse into a single row; every other blip keeps
+  // its own row exactly as before.
+  const trainGroups = new Map();
+  const rowOrder = [];   // preserves snap.blips' rank order for non-train rows
   for (const b of snap.blips) {
-    // mag is the 99.00 sentinel except on the visible/too_dim paths (see
-    // Visibility.h) - anything else would just be showing "99" as if it
-    // meant something.
-    const magKnown = b.visible || b.reason === 'too_dim';
-    const magText = magKnown ? b.mag.toFixed(2) : '—';
-    const bearing = compassPoint(b.theta) + ' ' +
-      Math.round(((b.theta % 360) + 360) % 360);
+    if (b.kind === 'train') {
+      const key = b.launchYear + '-' + b.launchNumber;
+      if (!trainGroups.has(key)) {
+        trainGroups.set(key, []);
+        rowOrder.push({ train: key });
+      }
+      trainGroups.get(key).push(b);
+    } else {
+      rowOrder.push({ sat: b });
+    }
+  }
 
-    const classes = ['roster-row'];
-    if (b.visible) classes.push('roster-visible');
-    if (b.id === activeId) classes.push('roster-active');
-
-    rows += '<tr class="' + classes.join(' ') + '">' +
-      '<td>' + escapeHtml(b.name) + '</td>' +
-      '<td>' + b.el.toFixed(1) + '&deg;</td>' +
-      '<td>' + bearing + '</td>' +
-      '<td>' + magText + '</td>' +
-      '<td>' + reasonText(b.reason) + '</td>' +
-      '</tr>';
+  let rows = '';
+  for (const entry of rowOrder) {
+    rows += entry.sat
+      ? satRow(entry.sat, activeId)
+      : trainGroupRow(trainGroups.get(entry.train), activeId);
   }
   body.innerHTML = rows;
 }
