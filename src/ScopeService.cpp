@@ -9,17 +9,27 @@
 
 #include "Config.h"
 #include "Net.h"
+#include "PassTask.h"
+#include "PsramAllocator.h"
 #include "TleFetcher.h"
 #include "TleStore.h"
 
 #include "Projection.h"
 #include "Propagator.h"
+#include "Solar.h"
+#include "StdMagTable.h"
 #include "TimeUtils.h"
+#include "TleCount.h"
 #include "Topocentric.h"
+#include "Visibility.h"
 
 namespace {
 
-constexpr int      MAX_TRACKED       = 40;
+// ~200 elsetrec-equivalent objects across the two groups. The objects
+// themselves (SGP4::Tle/SGP4 payloads, allocated via CoreAlloc in
+// Propagator) live in PSRAM regardless of MAX_TRACKED; this cap also bounds
+// PsramVector<Tracked>'s own backing array and the per-loop propagation cost.
+constexpr int      MAX_TRACKED       = 220;
 constexpr uint32_t REFRESH_HOURS     = 12;
 constexpr uint32_t BACKOFF_START_MS  = 60UL * 1000UL;      // 1 minute
 constexpr uint32_t BACKOFF_MAX_MS    = 60UL * 60UL * 1000UL;  // 60 minutes
@@ -31,23 +41,73 @@ struct Tracked {
     Propagator prop;
 };
 
-std::vector<Tracked> tracked;
+// Backing array lives in PSRAM (see PsramAllocator.h). Note this only
+// relocates the vector's own array - each Tracked's Propagator allocates its
+// SGP4 payload separately, via CoreAlloc, which is what actually keeps the
+// ~200-280 KB of per-object state off the internal heap.
+PsramVector<Tracked> tracked;
 std::map<int, std::deque<std::pair<double, double>>> trails;
 
 uint32_t nextAttemptMs = 0;
 uint32_t backoffMs     = BACKOFF_START_MS;
 uint32_t lastTrailMs   = 0;
 
-// Rebuilds `tracked` from an already-parsed element set. Callers that only
-// have raw text (the cached-file load path) go through rebuildFrom() below,
-// which parses once and delegates here; attemptRefresh() parses once for
-// validation and passes the same vector straight in, so the fetched body is
-// never parsed twice.
-void rebuildFromParsed(std::vector<Tle>& tles) {
-    tracked.clear();
-    tracked.reserve(tles.size());
+// Cached copy of the last build() result, refreshed at most once per second
+// from loop(). An HTTP request and the status LED both read this instead of
+// triggering their own propagation pass over every tracked object - see
+// currentSnapshot() below.
+Snapshot lastSnapshot;
+uint32_t lastBuildMs = 0;
 
-    for (const Tle& t : tles) {
+// Per-group validation baselines - the last element count that group
+// validated and saved successfully. 0 means "no history yet" (fresh install,
+// or that group has never had a successful fetch). Deliberately *not* a
+// combined total across both groups: "stations" (~21 objects) and "visual"
+// (~150+) have wildly different sizes, and checking a small group against a
+// large combined total rejects it forever (see FINDING 1, M2 Task 6 fix
+// round 1). Seeded from the cached files' own parse counts in begin(), so a
+// reboot does not lose the baseline and immediately reject the next refresh.
+int stationsPrevCount = 0;
+int visualPrevCount   = 0;
+
+// Rebuilds `tracked` from the two groups' raw text, deduplicating on satnum.
+// `visual` and `stations` overlap on the ISS (and possibly others); absorbing
+// `stations` first means a shared object keeps stations' element set, and a
+// duplicate never draws two blips on top of each other. Used by both the
+// cached-file load path (scope::begin()) and a successful fetch
+// (attemptRefresh()) - text is parsed exactly once per group either way.
+void rebuildFromGroups(const String& stationsRaw, const String& visualRaw) {
+    // Verification point (Task 6): PSRAM must fall by ~200 KB here while
+    // internal heap stays nearly flat. If internal heap drops instead, the
+    // SGP4 payloads are still landing on the wrong heap.
+    const uint32_t heapBefore  = ESP.getFreeHeap();
+    const uint32_t psramBefore = ESP.getFreePsram();
+
+    tracked.clear();
+
+    std::vector<Tle> parsed;
+    std::vector<int> seen;
+
+    auto absorb = [&](const String& raw) {
+        std::vector<Tle> batch;
+        parseTleText(raw, batch, MAX_TRACKED);
+        for (const Tle& t : batch) {
+            bool duplicate = false;
+            for (const int id : seen) {
+                if (id == t.satnum) { duplicate = true; break; }
+            }
+            if (duplicate) continue;
+            if (static_cast<int>(parsed.size()) >= MAX_TRACKED) break;
+            seen.push_back(t.satnum);
+            parsed.push_back(t);
+        }
+    };
+
+    absorb(stationsRaw);   // stations first, so the ISS keeps its group's element set
+    absorb(visualRaw);
+
+    tracked.reserve(parsed.size());
+    for (const Tle& t : parsed) {
         Tracked tr;
         tr.tle = t;
         if (tr.prop.init(t)) {
@@ -57,9 +117,6 @@ void rebuildFromParsed(std::vector<Tle>& tles) {
             Serial.printf("[scope] propagator init failed for %d\n", t.satnum);
         }
     }
-
-    Serial.printf("[scope] tracking %u objects\n",
-                  static_cast<unsigned>(tracked.size()));
 
     // Prune trails for satnums that dropped out of the new tracked set (e.g.
     // a decayed object or a catalogue change between refreshes). Without
@@ -77,17 +134,34 @@ void rebuildFromParsed(std::vector<Tle>& tles) {
             ++it;
         }
     }
-}
 
-// Cached-file load path: the only caller that starts from raw text rather
-// than an already-parsed vector.
-void rebuildFrom(const String& raw) {
-    std::vector<Tle> tles;
-    parseTleText(raw, tles, MAX_TRACKED);
-    rebuildFromParsed(tles);
+    const uint32_t heapAfter  = ESP.getFreeHeap();
+    const uint32_t psramAfter = ESP.getFreePsram();
+    Serial.printf("[scope] tracking %u objects, psram free %u\n",
+                  static_cast<unsigned>(tracked.size()), psramAfter);
+    Serial.printf("[scope] rebuild heap %u -> %u (delta %ld), psram %u -> %u (delta %ld)\n",
+                  heapBefore, heapAfter, static_cast<long>(heapAfter) - static_cast<long>(heapBefore),
+                  psramBefore, psramAfter, static_cast<long>(psramAfter) - static_cast<long>(psramBefore));
+
+    // Hand the freshly-parsed element sets to the prediction task. It copies
+    // them again internally before releasing our mutex, and builds its own
+    // Propagator instances - never a reference into `tracked` above, which
+    // this same function can clear() from the other core mid-prediction.
+    if (config::hasLocation()) {
+        passtask::submit(parsed, config::observer());
+    }
 }
 
 bool refreshDue(int64_t nowUnix) {
+    // A fresh timestamp with nothing tracked means the cache is gone while the
+    // NVS stamp survived. That is exactly what `pio run -t uploadfs` does: it
+    // rewrites the LittleFS partition holding the TLE cache, while the fetch
+    // timestamp lives in NVS on a different partition. Without this the device
+    // sits blind for up to REFRESH_HOURS, serving zero blips while cheerfully
+    // reporting its data is fresh. The backoff in attemptRefresh() still gates
+    // retries, so this cannot spin.
+    if (tracked.empty()) return true;
+
     const double age = tlestore::ageHours(nowUnix);
     if (age < 0.0) return true;                       // never fetched
     return age >= static_cast<double>(REFRESH_HOURS);
@@ -98,55 +172,73 @@ void backoffAndRetryLater() {
     nextAttemptMs = millis() + backoffMs;
 }
 
+// Parses `raw` and returns just the element count, for seeding/refreshing a
+// group's validation baseline without needing the parsed Tle objects.
+int parseGroupCount(const String& raw) {
+    std::vector<Tle> tles;
+    return parseTleText(raw, tles, MAX_TRACKED);
+}
+
+// Validates one group's freshly-fetched body before it's allowed to touch
+// flash or replace what's currently tracked. CelesTrak (and a truncated TLS
+// read) can return HTTP 200 with a plain-text error body or a partial
+// download; fetchGroup() only checks for a non-empty body, so the content
+// itself must be validated here. `previousCount` is *this group's own* last
+// validated count (see stationsPrevCount/visualPrevCount above) - never a
+// combined total across groups. The actual plausibility check lives in
+// lib/core's tlecount::tleCountIsPlausible() so it's natively testable;
+// this just parses, logs on rejection (naming the group, not "total"), and
+// reports the count back to the caller so it can update the baseline on
+// success.
+bool validateGroupBody(const char* group, const String& raw, int previousCount, int& countOut) {
+    std::vector<Tle> tles;
+    const int count = parseTleText(raw, tles, MAX_TRACKED);
+    countOut = count;
+
+    if (!tlecount::tleCountIsPlausible(count, previousCount)) {
+        Serial.printf("[scope] refresh rejected for '%s': parsed %d element set(s) "
+                      "(had %d tracked for this group), keeping existing cache\n",
+                      group, count, previousCount);
+        return false;
+    }
+    return true;
+}
+
 void attemptRefresh(int64_t nowUnix) {
-    String raw;
-    if (!tlefetcher::fetchGroup("stations", raw)) {
+    // Serialised: each fetch fully tears down its TLS client before the next
+    // one starts (fetchGroup()'s contract). Two concurrent handshakes would
+    // not fit in internal heap.
+    String stationsRaw;
+    int stationsCount = 0;
+    const bool stationsOk = tlefetcher::fetchGroup("stations", stationsRaw)
+                          && validateGroupBody("stations", stationsRaw, stationsPrevCount, stationsCount)
+                          && tlestore::save("stations", stationsRaw);
+    if (stationsOk) stationsPrevCount = stationsCount;
+
+    String visualRaw;
+    int visualCount = 0;
+    const bool visualOk = tlefetcher::fetchGroup("visual", visualRaw)
+                        && validateGroupBody("visual", visualRaw, visualPrevCount, visualCount)
+                        && tlestore::save("visual", visualRaw);
+    if (visualOk) visualPrevCount = visualCount;
+
+    if (!stationsOk || !visualOk) {
         backoffAndRetryLater();
         Serial.printf("[scope] refresh failed, retrying in %lu s\n",
                       static_cast<unsigned long>(backoffMs / 1000));
         return;
     }
 
-    // Parse and validate BEFORE anything touches flash or the freshness
-    // stamp. CelesTrak (and a truncated TLS read) can return HTTP 200 with a
-    // plain-text error body or a partial download; fetchGroup() only checks
-    // for a non-empty body, so the content itself must be validated here. A
-    // bad body must never overwrite a good cache, never get stamped fresh
-    // (that would block retry for REFRESH_HOURS), and never replace `tracked`.
-    std::vector<Tle> tles;
-    const int count = parseTleText(raw, tles, MAX_TRACKED);
-    const int previouslyTracked = static_cast<int>(tracked.size());
-
-    // Reject an empty parse outright, and reject a parse that yields fewer
-    // than half of what we were already tracking - that catches a partial
-    // download that still happens to parse cleanly (e.g. a truncated TLS
-    // read cut mid-file at a triple boundary).
-    const bool empty   = (count == 0);
-    const bool partial = (previouslyTracked > 0) && (count * 2 < previouslyTracked);
-    if (empty || partial) {
-        Serial.printf("[scope] refresh rejected: parsed %d element set(s) "
-                      "(had %d tracked), keeping existing cache\n",
-                      count, previouslyTracked);
-        backoffAndRetryLater();
-        return;
-    }
-
-    if (!tlestore::save(raw)) {
-        backoffAndRetryLater();
-        return;
-    }
-
-    // Only stamp the age after the cache write actually succeeded. This goes
-    // through TleStore rather than opening the NVS namespace a second time -
-    // two read-write Preferences handles on one namespace is a corruption risk.
+    // Only stamp the age after both cache writes actually succeeded. This
+    // goes through TleStore rather than opening the NVS namespace a second
+    // time - two read-write Preferences handles on one namespace is a
+    // corruption risk.
     tlestore::markFetched(nowUnix);
 
     backoffMs = BACKOFF_START_MS;
     nextAttemptMs = millis() + 60UL * 1000UL;
 
-    // Drive the rebuild from the vector we already parsed above - never parse
-    // the fetched body twice.
-    rebuildFromParsed(tles);
+    rebuildFromGroups(stationsRaw, visualRaw);
 }
 
 void sampleTrails(int64_t nowUnix, const Observer& obs) {
@@ -177,10 +269,21 @@ namespace scope {
 void begin() {
     tlestore::begin();
 
-    const String cached = tlestore::load();
-    if (cached.length() > 0) {
+    const String s = tlestore::load("stations");
+    const String v = tlestore::load("visual");
+
+    // Seed each group's validation baseline from what's already on flash, so
+    // a reboot doesn't forget it and treat the next refresh's real count as
+    // unprecedented (previousCount == 0, which would just accept anything -
+    // harmless but loses the intended check for one cycle) or, worse, hold
+    // onto a stale in-RAM value from before the reboot. An empty/missing
+    // cache parses to 0, which is exactly the "no history yet" baseline.
+    stationsPrevCount = parseGroupCount(s);
+    visualPrevCount   = parseGroupCount(v);
+
+    if (s.length() > 0 || v.length() > 0) {
         Serial.println("[scope] loading cached element sets");
-        rebuildFrom(cached);
+        rebuildFromGroups(s, v);
     }
 }
 
@@ -197,13 +300,29 @@ void loop() {
         attemptRefresh(now);
     }
 
-    // hasLocation() takes the NVS mutex for four lookups; only pay for it
-    // when the trail timer actually fires, not on every spin of loop().
+    // Rebuild the cached snapshot at most once per second. Rollover-safe, same
+    // pattern as the trail timer below. This runs ahead of the hasLocation()
+    // early-return just below so the cache still reflects NoLocation status
+    // (build() itself checks) rather than getting stuck on whatever the last
+    // build happened to be - the status LED and every HTTP request read only
+    // this cached copy now, instead of each triggering its own propagation
+    // pass over ~200 tracked objects.
+    if (millis() - lastBuildMs >= 1000) {
+        lastBuildMs = millis();
+        lastSnapshot = build();
+    }
+
+    // hasLocation() takes the NVS mutex for four lookups; it is called both by
+    // build() (~1 Hz via the snapshot cache) and when the trail timer fires.
     if (millis() - lastTrailMs >= TRAIL_INTERVAL_MS) {
         lastTrailMs = millis();
         if (!config::hasLocation()) return;
         sampleTrails(now, config::observer());
     }
+}
+
+const Snapshot& currentSnapshot() {
+    return lastSnapshot;
 }
 
 Snapshot build() {
@@ -218,6 +337,15 @@ Snapshot build() {
 
     const Observer obs  = config::observer();
     const double   gmst = timeutils::gmstDegrees(timeutils::julianDate(s.t));
+
+    // These depend only on the instant, not on any individual tracked object,
+    // so compute them once per snapshot rather than once per blip (up to ~200
+    // objects) - recomputing solar position per object is pure waste on a
+    // synchronous web server.
+    const Vec3   sun       = sunEci(timeutils::julianDate(s.t));
+    const Vec3   site      = siteEci(obs, gmst);
+    const double sunAltDeg = sunAltitudeDeg(obs, s.t);
+    s.sunAltDeg = sunAltDeg;
 
     // Propagator::positionAt is non-const (see Propagator.h), so this must
     // bind non-const.
@@ -234,8 +362,12 @@ Snapshot build() {
         b.r            = skyRadius(la.elDeg);
         b.theta        = la.azDeg;
         b.elevationDeg = la.elDeg;
-        b.magnitude    = 99.0;    // M2 computes this
-        b.visible      = false;   // M2 computes this
+
+        const Verdict v = judge(la, pos, sun, site, sunAltDeg,
+                                 stdMagFor(tr.tle.satnum));
+        b.magnitude = v.magnitude;
+        b.visible   = v.visible;
+        b.reason    = visReasonName(v.reason);
 
         auto it = trails.find(tr.tle.satnum);
         if (it != trails.end()) {
@@ -244,6 +376,8 @@ Snapshot build() {
 
         s.blips.push_back(b);
     }
+
+    s.events = passtask::upcoming(s.t);
 
     rankAndCap(s);
     return s;

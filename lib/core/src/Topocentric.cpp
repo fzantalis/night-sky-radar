@@ -55,7 +55,16 @@ LookAngles look(const Vec3& satTemeKm, const Observer& obs, double gmstDeg) {
 
     if (la.rangeKm <= 0.0) return la;
 
-    la.elDeg = std::asin(rZ / la.rangeKm) * RAD2DEG;
+    // rZ (a three-term SEZ sum) and rangeKm (a separate sqrt of a dot
+    // product) are computed by independent floating-point paths, so they are
+    // only *mathematically* guaranteed to satisfy |rZ| <= rangeKm. Near
+    // zenith, rounding can push the ratio an ulp past 1.0, and asin() of
+    // anything outside [-1, 1] is NaN. Clamp before asin, matching the
+    // acos clamp in Magnitude.cpp for the same reason.
+    double sinEl = rZ / la.rangeKm;
+    if (sinEl > 1.0)  sinEl = 1.0;
+    if (sinEl < -1.0) sinEl = -1.0;
+    la.elDeg = std::asin(sinEl) * RAD2DEG;
 
     // Azimuth measured from north, increasing toward east. Negating the south
     // component turns SEZ into a north-referenced frame.

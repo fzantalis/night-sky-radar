@@ -5,6 +5,7 @@
 
 #include "Vec3.h"
 #include "Tle.h"
+#include "CoreAlloc.h"
 
 // Forward-declared so the vendored SGP4 headers do not leak into every
 // translation unit that merely wants to propagate an orbit.
@@ -46,8 +47,20 @@ public:
     bool   ready()   const { return ready_; }
 
 private:
-    std::unique_ptr<libsgp4::Tle>  tle_;
-    std::unique_ptr<libsgp4::SGP4> sgp4_;
+    // tle_/sgp4_ are allocated via corealloc::alloc() + placement new and
+    // released via an explicit destructor call + corealloc::free(), not
+    // `delete` - that's how the payload (and the std::string allocations
+    // inside libsgp4::Tle) end up in PSRAM on the firmware build instead of
+    // the internal heap. Complete types for libsgp4::Tle/SGP4 aren't visible
+    // in this header (forward-declared only, see the class comment above),
+    // so these deleters are declared here but their operator()s are defined
+    // in Propagator.cpp, where the vendored headers are included - the same
+    // reason ~Propagator() is `= default` out-of-line rather than inline.
+    struct TleDeleter  { void operator()(libsgp4::Tle* p)  const noexcept; };
+    struct Sgp4Deleter { void operator()(libsgp4::SGP4* p) const noexcept; };
+
+    std::unique_ptr<libsgp4::Tle, TleDeleter>   tle_;
+    std::unique_ptr<libsgp4::SGP4, Sgp4Deleter> sgp4_;
     double epochJd_ = 0.0;
     bool   ready_   = false;
 };

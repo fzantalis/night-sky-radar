@@ -24,6 +24,7 @@ struct Blip {
     double      elevationDeg = 0.0;   // degrees above horizon; r is derived from this via skyRadius()
     double      magnitude    = 99.0;
     bool        visible      = false; // reserved for M2; always false at M1
+    std::string reason;    // visibility verdict reason, for debugging
     std::vector<std::pair<double, double>> trail;  // (r, theta) history
 };
 
@@ -43,12 +44,24 @@ struct Ring {
 // visibility floor, and the elevation-0 horizon.
 std::vector<Ring> defaultSkyRings();
 
+// A predicted upcoming visible pass, as read from passtask::upcoming(). This
+// is display data, already rebased onto the snapshot's own `t` - renderers
+// never recompute a countdown, they just format one.
+struct Event {
+    std::string name;
+    int64_t     startsIn = 0;     // seconds from the snapshot's t
+    double      maxEl    = 0.0;
+    bool        visible  = false;
+};
+
 struct Snapshot {
     int64_t     t            = 0;
     ScopeStatus status       = ScopeStatus::NoTime;
     double      tleAgeHours  = -1.0;   // negative means unknown
     std::vector<Blip> blips;
     std::vector<Ring> rings  = defaultSkyRings();
+    double      sunAltDeg    = 0.0;
+    std::vector<Event> events;
 };
 
 // Sorts visible objects first, then by ascending r (higher in the sky first),

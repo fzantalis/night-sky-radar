@@ -221,6 +221,42 @@ void test_rank_leaves_short_lists_alone(void) {
     TEST_ASSERT_EQUAL_INT(2, static_cast<int>(s.blips.size()));
 }
 
+void test_json_reports_sun_altitude(void) {
+    Snapshot s;
+    s.status = ScopeStatus::Ok;
+    s.sunAltDeg = -12.75;
+    TEST_ASSERT_TRUE(contains(toJson(s), "\"sunAltDeg\":-12.75"));
+}
+
+void test_json_reports_blip_reason(void) {
+    Snapshot s;
+    s.status = ScopeStatus::Ok;
+    Blip b = makeBlip(25544, "ISS", 0.5, false);
+    b.reason = "eclipsed";
+    s.blips.push_back(b);
+    TEST_ASSERT_TRUE(contains(toJson(s), "\"reason\":\"eclipsed\""));
+}
+
+void test_json_empty_events_is_valid_array(void) {
+    Snapshot s;
+    s.status = ScopeStatus::Ok;
+    TEST_ASSERT_TRUE(contains(toJson(s), "\"events\":[]"));
+}
+
+void test_json_emits_event_fields(void) {
+    Snapshot s;
+    s.status = ScopeStatus::Ok;
+    Event e;
+    e.name = "ISS (ZARYA)";
+    e.startsIn = 420;
+    e.maxEl = 67.0;
+    e.visible = true;
+    s.events.push_back(e);
+    const std::string j = toJson(s);
+    TEST_ASSERT_TRUE(contains(j, "\"startsIn\":420"));
+    TEST_ASSERT_TRUE(contains(j, "\"maxEl\":67.0"));
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_json_reports_timestamp_and_status);
@@ -239,5 +275,9 @@ int main(int, char**) {
     RUN_TEST(test_rank_orders_by_elevation_within_a_group);
     RUN_TEST(test_rank_caps_at_max_blips);
     RUN_TEST(test_rank_leaves_short_lists_alone);
+    RUN_TEST(test_json_reports_sun_altitude);
+    RUN_TEST(test_json_reports_blip_reason);
+    RUN_TEST(test_json_empty_events_is_valid_array);
+    RUN_TEST(test_json_emits_event_fields);
     return UNITY_END();
 }

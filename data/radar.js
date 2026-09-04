@@ -138,6 +138,33 @@ function drawBlips() {
   }
 }
 
+// The panel can only ever show one blip at a time, so when nothing higher-
+// priority pre-empts it (NO TIME / OPEN /CONFIG / LINK LOST / an imminent
+// event), the status arc rotates through snap.blips roughly every 3 s rather
+// than pinning on the top-ranked one forever. cycleIndex only ever advances
+// on its own timer below; statusLine()/statusBlip() just read it modulo the
+// current blip count, so a shrinking list can't put it out of range.
+let cycleIndex = 0;
+setInterval(() => {
+  cycleIndex++;
+  renderRoster();
+}, 3000);
+
+// Which blip (if any) the status arc is showing right now. Null whenever the
+// arc is showing something other than a blip readout (NO TIME, OPEN /CONFIG,
+// LINK LOST, CONNECTING, OFFLINE, NOTHING UP, or an imminent event) - the
+// roster has nothing to highlight in that case. Kept in one place so the
+// canvas readout and the HTML roster can never disagree about which row is
+// "current".
+function statusBlip() {
+  if (linkLost() || !snap) return null;
+  if (snap.status === 'no_time' || snap.status === 'no_location') return null;
+  if (snap.events && snap.events.length > 0) return null;
+  if (snap.status === 'offline') return null;
+  if (!snap.blips || snap.blips.length === 0) return null;
+  return snap.blips[cycleIndex % snap.blips.length];
+}
+
 // The bottom arc holds roughly 20 characters. Anything longer must be
 // shortened in the core, not here.
 function statusLine() {
@@ -146,12 +173,23 @@ function statusLine() {
   switch (snap.status) {
     case 'no_time':     return 'NO TIME';
     case 'no_location': return 'OPEN /CONFIG';
-    case 'offline':     return 'OFFLINE';
   }
+
+  // A pending visible pass takes priority over the current-position readout.
+  if (snap.events && snap.events.length > 0) {
+    const e = snap.events[0];
+    const mins = Math.max(0, Math.round(e.startsIn / 60));
+    const when = mins >= 60 ? Math.round(mins / 60) + 'H' : mins + 'M';
+    const name = e.name.split(' ')[0].slice(0, 8);
+    return (name + ' ' + when + ' ' + Math.round(e.maxEl) + 'DEG').slice(0, 20);
+  }
+
+  if (snap.status === 'offline') return 'OFFLINE';
   if (!snap.blips || snap.blips.length === 0) return 'NOTHING UP';
-  const b = snap.blips[0];
-  const el = Math.round(b.el);
-  return (b.name.split(' ')[0] + ' ' + el + 'DEG').slice(0, 20);
+
+  const b = statusBlip();
+  return (b.name.split(' ')[0].slice(0, 10) + ' ' +
+          Math.round(90 - b.r * 90) + 'DEG').slice(0, 20);
 }
 
 function drawStatus() {
@@ -175,6 +213,77 @@ function frame() {
   requestAnimationFrame(frame);
 }
 
+// --- Roster: an HTML companion view below the canvas, entirely separate from
+// the panel simulation above. Every blip in the snapshot gets a row here even
+// though the panel itself can only ever narrate one of them at a time; this
+// is where "SL-14 47DEG" gets a name and the other eleven dots stop being
+// anonymous. No hover/click handling - it's a plain read-only table.
+
+const COMPASS16 = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE',
+                    'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+
+// 16-point compass (22.5deg per sector) - the roster has room for the extra
+// precision that the 20-char panel arc never could.
+function compassPoint(thetaDeg) {
+  const t = ((thetaDeg % 360) + 360) % 360;
+  return COMPASS16[Math.round(t / 22.5) % 16];
+}
+
+const REASON_TEXT = {
+  visible:       'Visible',
+  below_horizon: 'Below horizon',
+  daylight:      'Daylight',
+  eclipsed:      'In shadow',
+  too_dim:       'Too dim',
+};
+
+function reasonText(reason) {
+  return REASON_TEXT[reason] || reason;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+function renderRoster() {
+  const body = document.getElementById('roster-body');
+  if (!body) return;
+
+  if (!snap || !snap.blips || snap.blips.length === 0) {
+    body.innerHTML = '<tr><td class="roster-empty" colspan="5">NOTHING TRACKED</td></tr>';
+    return;
+  }
+
+  const active = statusBlip();
+  const activeId = active ? active.id : null;
+
+  let rows = '';
+  for (const b of snap.blips) {
+    // mag is the 99.00 sentinel except on the visible/too_dim paths (see
+    // Visibility.h) - anything else would just be showing "99" as if it
+    // meant something.
+    const magKnown = b.visible || b.reason === 'too_dim';
+    const magText = magKnown ? b.mag.toFixed(2) : '—';
+    const bearing = compassPoint(b.theta) + ' ' +
+      Math.round(((b.theta % 360) + 360) % 360);
+
+    const classes = ['roster-row'];
+    if (b.visible) classes.push('roster-visible');
+    if (b.id === activeId) classes.push('roster-active');
+
+    rows += '<tr class="' + classes.join(' ') + '">' +
+      '<td>' + escapeHtml(b.name) + '</td>' +
+      '<td>' + b.el.toFixed(1) + '&deg;</td>' +
+      '<td>' + bearing + '</td>' +
+      '<td>' + magText + '</td>' +
+      '<td>' + reasonText(b.reason) + '</td>' +
+      '</tr>';
+  }
+  body.innerHTML = rows;
+}
+
 async function poll() {
   try {
     const res = await fetch('/api/scope', { cache: 'no-store' });
@@ -186,6 +295,7 @@ async function poll() {
     // itself is left untouched (still null on a never-successful first load).
     consecutiveFailures++;
   }
+  renderRoster();
 }
 
 setInterval(poll, 1000);

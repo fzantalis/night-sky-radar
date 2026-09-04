@@ -6,8 +6,8 @@ namespace tlestore {
 
 void begin();
 
-bool    save(const String& raw);
-String  load();
+bool    save(const char* group, const String& raw);
+String  load(const char* group);
 
 // Records a successful fetch. Call this ONLY after save() returned true, so a
 // failed fetch never refreshes the reported age. This is the only writer of the

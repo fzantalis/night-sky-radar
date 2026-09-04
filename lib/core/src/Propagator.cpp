@@ -1,5 +1,6 @@
 #include "Propagator.h"
 
+#include <new>
 #include <string>
 #include <utility>
 
@@ -7,6 +8,20 @@
 
 #include "sgp4/SGP4.h"
 #include "sgp4/Tle.h"
+
+void Propagator::TleDeleter::operator()(libsgp4::Tle* p) const noexcept {
+    if (p != nullptr) {
+        p->~Tle();
+        corealloc::free(p);
+    }
+}
+
+void Propagator::Sgp4Deleter::operator()(libsgp4::SGP4* p) const noexcept {
+    if (p != nullptr) {
+        p->~SGP4();
+        corealloc::free(p);
+    }
+}
 
 Propagator::Propagator() = default;
 Propagator::~Propagator() = default;
@@ -41,23 +56,54 @@ bool Propagator::init(const Tle& tle) {
     ready_ = false;
     epochJd_ = 0.0;
 
-    try {
-        auto libTle = std::make_unique<libsgp4::Tle>(
-            std::string(tle.name), std::string(tle.line1), std::string(tle.line2));
-        auto libSgp4 = std::make_unique<libsgp4::SGP4>(*libTle);
+    // Drop any previous payload up front so a failed re-init never leaves a
+    // stale allocation attached to this instance.
+    tle_.reset();
+    sgp4_.reset();
 
-        epochJd_ = libTle->Epoch().ToJulian();
-        tle_ = std::move(libTle);
-        sgp4_ = std::move(libSgp4);
-        ready_ = true;
-        return true;
-    } catch (...) {
-        tle_.reset();
-        sgp4_.reset();
-        epochJd_ = 0.0;
-        ready_ = false;
+    void* tleMem = corealloc::alloc(sizeof(libsgp4::Tle));
+    if (tleMem == nullptr) {
         return false;
     }
+
+    libsgp4::Tle* rawTle = nullptr;
+    try {
+        rawTle = new (tleMem) libsgp4::Tle(
+            std::string(tle.name), std::string(tle.line1), std::string(tle.line2));
+    } catch (...) {
+        // Construction threw: no object was ever completed at tleMem, so
+        // free the raw memory directly. Running it through TleDeleter here
+        // would call ~Tle() on a non-existent object.
+        corealloc::free(tleMem);
+        return false;
+    }
+    std::unique_ptr<libsgp4::Tle, TleDeleter> libTle(rawTle);
+
+    void* sgp4Mem = corealloc::alloc(sizeof(libsgp4::SGP4));
+    if (sgp4Mem == nullptr) {
+        return false;   // libTle goes out of scope: destructs + frees itself
+    }
+
+    libsgp4::SGP4* rawSgp4 = nullptr;
+    try {
+        rawSgp4 = new (sgp4Mem) libsgp4::SGP4(*libTle);
+    } catch (...) {
+        corealloc::free(sgp4Mem);
+        return false;
+    }
+    std::unique_ptr<libsgp4::SGP4, Sgp4Deleter> libSgp4(rawSgp4);
+
+    try {
+        epochJd_ = libTle->Epoch().ToJulian();
+    } catch (...) {
+        epochJd_ = 0.0;
+        return false;
+    }
+
+    tle_ = std::move(libTle);
+    sgp4_ = std::move(libSgp4);
+    ready_ = true;
+    return true;
 }
 
 bool Propagator::positionAt(int64_t unixSeconds, Vec3& posKm) {
