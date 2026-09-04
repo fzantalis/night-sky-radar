@@ -8,6 +8,7 @@
 namespace {
 
 bool     timeEverValid = false;
+bool     ipLogged      = false;
 uint32_t lastRetryMs   = 0;
 
 // Any timestamp before 2023-01-01 means the RTC has not been set.
@@ -29,6 +30,19 @@ void begin() {
 }
 
 void loop() {
+    // Log the IP once per connection, independent of NTP state below - DHCP
+    // can hand out a different lease on any reconnect, and with nothing ever
+    // printing it the device becomes a subnet-scan exercise to find. Runs on
+    // every loop() call (not just pre-NTP-sync) so a lease change after a
+    // WiFi drop/reconnect gets logged too.
+    if (!ipLogged && WiFi.status() == WL_CONNECTED) {
+        Serial.print("[net] IP address: ");
+        Serial.println(WiFi.localIP());
+        ipLogged = true;
+    } else if (ipLogged && WiFi.status() != WL_CONNECTED) {
+        ipLogged = false;   // disconnected - log again on reconnect, lease may differ
+    }
+
     if (timeEverValid) return;
 
     // Re-check at most every 2 seconds until the first successful sync.

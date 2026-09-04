@@ -16,6 +16,7 @@
 #include "Projection.h"
 #include "Propagator.h"
 #include "TimeUtils.h"
+#include "TleCount.h"
 #include "Topocentric.h"
 
 namespace {
@@ -46,6 +47,17 @@ std::map<int, std::deque<std::pair<double, double>>> trails;
 uint32_t nextAttemptMs = 0;
 uint32_t backoffMs     = BACKOFF_START_MS;
 uint32_t lastTrailMs   = 0;
+
+// Per-group validation baselines - the last element count that group
+// validated and saved successfully. 0 means "no history yet" (fresh install,
+// or that group has never had a successful fetch). Deliberately *not* a
+// combined total across both groups: "stations" (~21 objects) and "visual"
+// (~150+) have wildly different sizes, and checking a small group against a
+// large combined total rejects it forever (see FINDING 1, M2 Task 6 fix
+// round 1). Seeded from the cached files' own parse counts in begin(), so a
+// reboot does not lose the baseline and immediately reject the next refresh.
+int stationsPrevCount = 0;
+int visualPrevCount   = 0;
 
 // Rebuilds `tracked` from the two groups' raw text, deduplicating on satnum.
 // `visual` and `stations` overlap on the ISS (and possibly others); absorbing
@@ -132,49 +144,55 @@ void backoffAndRetryLater() {
     nextAttemptMs = millis() + backoffMs;
 }
 
+// Parses `raw` and returns just the element count, for seeding/refreshing a
+// group's validation baseline without needing the parsed Tle objects.
+int parseGroupCount(const String& raw) {
+    std::vector<Tle> tles;
+    return parseTleText(raw, tles, MAX_TRACKED);
+}
+
 // Validates one group's freshly-fetched body before it's allowed to touch
 // flash or replace what's currently tracked. CelesTrak (and a truncated TLS
 // read) can return HTTP 200 with a plain-text error body or a partial
 // download; fetchGroup() only checks for a non-empty body, so the content
-// itself must be validated here. `previouslyTracked` is the combined size of
-// the current `tracked` set (both groups together) - not a per-group count,
-// since a single group's cache was never sized against just its own prior
-// element count - so this only catches a gross, whole-file failure, not a
-// smaller legitimate shrink in one group.
-bool validateGroupBody(const String& raw, int previouslyTracked) {
+// itself must be validated here. `previousCount` is *this group's own* last
+// validated count (see stationsPrevCount/visualPrevCount above) - never a
+// combined total across groups. The actual plausibility check lives in
+// lib/core's tlecount::tleCountIsPlausible() so it's natively testable;
+// this just parses, logs on rejection (naming the group, not "total"), and
+// reports the count back to the caller so it can update the baseline on
+// success.
+bool validateGroupBody(const char* group, const String& raw, int previousCount, int& countOut) {
     std::vector<Tle> tles;
     const int count = parseTleText(raw, tles, MAX_TRACKED);
+    countOut = count;
 
-    // Reject an empty parse outright, and reject a parse that yields fewer
-    // than half of what we were already tracking overall - that catches a
-    // partial download that still happens to parse cleanly (e.g. a truncated
-    // TLS read cut mid-file at a triple boundary).
-    const bool empty   = (count == 0);
-    const bool partial = (previouslyTracked > 0) && (count * 2 < previouslyTracked);
-    if (empty || partial) {
-        Serial.printf("[scope] refresh rejected: parsed %d element set(s) "
-                      "(had %d tracked total), keeping existing cache\n",
-                      count, previouslyTracked);
+    if (!tlecount::tleCountIsPlausible(count, previousCount)) {
+        Serial.printf("[scope] refresh rejected for '%s': parsed %d element set(s) "
+                      "(had %d tracked for this group), keeping existing cache\n",
+                      group, count, previousCount);
         return false;
     }
     return true;
 }
 
 void attemptRefresh(int64_t nowUnix) {
-    const int previouslyTracked = static_cast<int>(tracked.size());
-
     // Serialised: each fetch fully tears down its TLS client before the next
     // one starts (fetchGroup()'s contract). Two concurrent handshakes would
     // not fit in internal heap.
     String stationsRaw;
+    int stationsCount = 0;
     const bool stationsOk = tlefetcher::fetchGroup("stations", stationsRaw)
-                          && validateGroupBody(stationsRaw, previouslyTracked)
+                          && validateGroupBody("stations", stationsRaw, stationsPrevCount, stationsCount)
                           && tlestore::save("stations", stationsRaw);
+    if (stationsOk) stationsPrevCount = stationsCount;
 
     String visualRaw;
+    int visualCount = 0;
     const bool visualOk = tlefetcher::fetchGroup("visual", visualRaw)
-                        && validateGroupBody(visualRaw, previouslyTracked)
+                        && validateGroupBody("visual", visualRaw, visualPrevCount, visualCount)
                         && tlestore::save("visual", visualRaw);
+    if (visualOk) visualPrevCount = visualCount;
 
     if (!stationsOk || !visualOk) {
         backoffAndRetryLater();
@@ -225,6 +243,16 @@ void begin() {
 
     const String s = tlestore::load("stations");
     const String v = tlestore::load("visual");
+
+    // Seed each group's validation baseline from what's already on flash, so
+    // a reboot doesn't forget it and treat the next refresh's real count as
+    // unprecedented (previousCount == 0, which would just accept anything -
+    // harmless but loses the intended check for one cycle) or, worse, hold
+    // onto a stale in-RAM value from before the reboot. An empty/missing
+    // cache parses to 0, which is exactly the "no history yet" baseline.
+    stationsPrevCount = parseGroupCount(s);
+    visualPrevCount   = parseGroupCount(v);
+
     if (s.length() > 0 || v.length() > 0) {
         Serial.println("[scope] loading cached element sets");
         rebuildFromGroups(s, v);
