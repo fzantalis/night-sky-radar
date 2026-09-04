@@ -9,6 +9,7 @@
 
 #include "Config.h"
 #include "Net.h"
+#include "PsramAllocator.h"
 #include "TleFetcher.h"
 #include "TleStore.h"
 
@@ -19,7 +20,11 @@
 
 namespace {
 
-constexpr int      MAX_TRACKED       = 40;
+// ~200 elsetrec-equivalent objects across the two groups. The objects
+// themselves (SGP4::Tle/SGP4 payloads, allocated via CoreAlloc in
+// Propagator) live in PSRAM regardless of MAX_TRACKED; this cap also bounds
+// PsramVector<Tracked>'s own backing array and the per-loop propagation cost.
+constexpr int      MAX_TRACKED       = 220;
 constexpr uint32_t REFRESH_HOURS     = 12;
 constexpr uint32_t BACKOFF_START_MS  = 60UL * 1000UL;      // 1 minute
 constexpr uint32_t BACKOFF_MAX_MS    = 60UL * 60UL * 1000UL;  // 60 minutes
@@ -31,23 +36,55 @@ struct Tracked {
     Propagator prop;
 };
 
-std::vector<Tracked> tracked;
+// Backing array lives in PSRAM (see PsramAllocator.h). Note this only
+// relocates the vector's own array - each Tracked's Propagator allocates its
+// SGP4 payload separately, via CoreAlloc, which is what actually keeps the
+// ~200-280 KB of per-object state off the internal heap.
+PsramVector<Tracked> tracked;
 std::map<int, std::deque<std::pair<double, double>>> trails;
 
 uint32_t nextAttemptMs = 0;
 uint32_t backoffMs     = BACKOFF_START_MS;
 uint32_t lastTrailMs   = 0;
 
-// Rebuilds `tracked` from an already-parsed element set. Callers that only
-// have raw text (the cached-file load path) go through rebuildFrom() below,
-// which parses once and delegates here; attemptRefresh() parses once for
-// validation and passes the same vector straight in, so the fetched body is
-// never parsed twice.
-void rebuildFromParsed(std::vector<Tle>& tles) {
-    tracked.clear();
-    tracked.reserve(tles.size());
+// Rebuilds `tracked` from the two groups' raw text, deduplicating on satnum.
+// `visual` and `stations` overlap on the ISS (and possibly others); absorbing
+// `stations` first means a shared object keeps stations' element set, and a
+// duplicate never draws two blips on top of each other. Used by both the
+// cached-file load path (scope::begin()) and a successful fetch
+// (attemptRefresh()) - text is parsed exactly once per group either way.
+void rebuildFromGroups(const String& stationsRaw, const String& visualRaw) {
+    // Verification point (Task 6): PSRAM must fall by ~200 KB here while
+    // internal heap stays nearly flat. If internal heap drops instead, the
+    // SGP4 payloads are still landing on the wrong heap.
+    const uint32_t heapBefore  = ESP.getFreeHeap();
+    const uint32_t psramBefore = ESP.getFreePsram();
 
-    for (const Tle& t : tles) {
+    tracked.clear();
+
+    std::vector<Tle> parsed;
+    std::vector<int> seen;
+
+    auto absorb = [&](const String& raw) {
+        std::vector<Tle> batch;
+        parseTleText(raw, batch, MAX_TRACKED);
+        for (const Tle& t : batch) {
+            bool duplicate = false;
+            for (const int id : seen) {
+                if (id == t.satnum) { duplicate = true; break; }
+            }
+            if (duplicate) continue;
+            if (static_cast<int>(parsed.size()) >= MAX_TRACKED) break;
+            seen.push_back(t.satnum);
+            parsed.push_back(t);
+        }
+    };
+
+    absorb(stationsRaw);   // stations first, so the ISS keeps its group's element set
+    absorb(visualRaw);
+
+    tracked.reserve(parsed.size());
+    for (const Tle& t : parsed) {
         Tracked tr;
         tr.tle = t;
         if (tr.prop.init(t)) {
@@ -57,9 +94,6 @@ void rebuildFromParsed(std::vector<Tle>& tles) {
             Serial.printf("[scope] propagator init failed for %d\n", t.satnum);
         }
     }
-
-    Serial.printf("[scope] tracking %u objects\n",
-                  static_cast<unsigned>(tracked.size()));
 
     // Prune trails for satnums that dropped out of the new tracked set (e.g.
     // a decayed object or a catalogue change between refreshes). Without
@@ -77,14 +111,14 @@ void rebuildFromParsed(std::vector<Tle>& tles) {
             ++it;
         }
     }
-}
 
-// Cached-file load path: the only caller that starts from raw text rather
-// than an already-parsed vector.
-void rebuildFrom(const String& raw) {
-    std::vector<Tle> tles;
-    parseTleText(raw, tles, MAX_TRACKED);
-    rebuildFromParsed(tles);
+    const uint32_t heapAfter  = ESP.getFreeHeap();
+    const uint32_t psramAfter = ESP.getFreePsram();
+    Serial.printf("[scope] tracking %u objects, psram free %u\n",
+                  static_cast<unsigned>(tracked.size()), psramAfter);
+    Serial.printf("[scope] rebuild heap %u -> %u (delta %ld), psram %u -> %u (delta %ld)\n",
+                  heapBefore, heapAfter, static_cast<long>(heapAfter) - static_cast<long>(heapBefore),
+                  psramBefore, psramAfter, static_cast<long>(psramAfter) - static_cast<long>(psramBefore));
 }
 
 bool refreshDue(int64_t nowUnix) {
@@ -98,55 +132,67 @@ void backoffAndRetryLater() {
     nextAttemptMs = millis() + backoffMs;
 }
 
+// Validates one group's freshly-fetched body before it's allowed to touch
+// flash or replace what's currently tracked. CelesTrak (and a truncated TLS
+// read) can return HTTP 200 with a plain-text error body or a partial
+// download; fetchGroup() only checks for a non-empty body, so the content
+// itself must be validated here. `previouslyTracked` is the combined size of
+// the current `tracked` set (both groups together) - not a per-group count,
+// since a single group's cache was never sized against just its own prior
+// element count - so this only catches a gross, whole-file failure, not a
+// smaller legitimate shrink in one group.
+bool validateGroupBody(const String& raw, int previouslyTracked) {
+    std::vector<Tle> tles;
+    const int count = parseTleText(raw, tles, MAX_TRACKED);
+
+    // Reject an empty parse outright, and reject a parse that yields fewer
+    // than half of what we were already tracking overall - that catches a
+    // partial download that still happens to parse cleanly (e.g. a truncated
+    // TLS read cut mid-file at a triple boundary).
+    const bool empty   = (count == 0);
+    const bool partial = (previouslyTracked > 0) && (count * 2 < previouslyTracked);
+    if (empty || partial) {
+        Serial.printf("[scope] refresh rejected: parsed %d element set(s) "
+                      "(had %d tracked total), keeping existing cache\n",
+                      count, previouslyTracked);
+        return false;
+    }
+    return true;
+}
+
 void attemptRefresh(int64_t nowUnix) {
-    String raw;
-    if (!tlefetcher::fetchGroup("stations", raw)) {
+    const int previouslyTracked = static_cast<int>(tracked.size());
+
+    // Serialised: each fetch fully tears down its TLS client before the next
+    // one starts (fetchGroup()'s contract). Two concurrent handshakes would
+    // not fit in internal heap.
+    String stationsRaw;
+    const bool stationsOk = tlefetcher::fetchGroup("stations", stationsRaw)
+                          && validateGroupBody(stationsRaw, previouslyTracked)
+                          && tlestore::save("stations", stationsRaw);
+
+    String visualRaw;
+    const bool visualOk = tlefetcher::fetchGroup("visual", visualRaw)
+                        && validateGroupBody(visualRaw, previouslyTracked)
+                        && tlestore::save("visual", visualRaw);
+
+    if (!stationsOk || !visualOk) {
         backoffAndRetryLater();
         Serial.printf("[scope] refresh failed, retrying in %lu s\n",
                       static_cast<unsigned long>(backoffMs / 1000));
         return;
     }
 
-    // Parse and validate BEFORE anything touches flash or the freshness
-    // stamp. CelesTrak (and a truncated TLS read) can return HTTP 200 with a
-    // plain-text error body or a partial download; fetchGroup() only checks
-    // for a non-empty body, so the content itself must be validated here. A
-    // bad body must never overwrite a good cache, never get stamped fresh
-    // (that would block retry for REFRESH_HOURS), and never replace `tracked`.
-    std::vector<Tle> tles;
-    const int count = parseTleText(raw, tles, MAX_TRACKED);
-    const int previouslyTracked = static_cast<int>(tracked.size());
-
-    // Reject an empty parse outright, and reject a parse that yields fewer
-    // than half of what we were already tracking - that catches a partial
-    // download that still happens to parse cleanly (e.g. a truncated TLS
-    // read cut mid-file at a triple boundary).
-    const bool empty   = (count == 0);
-    const bool partial = (previouslyTracked > 0) && (count * 2 < previouslyTracked);
-    if (empty || partial) {
-        Serial.printf("[scope] refresh rejected: parsed %d element set(s) "
-                      "(had %d tracked), keeping existing cache\n",
-                      count, previouslyTracked);
-        backoffAndRetryLater();
-        return;
-    }
-
-    if (!tlestore::save(raw)) {
-        backoffAndRetryLater();
-        return;
-    }
-
-    // Only stamp the age after the cache write actually succeeded. This goes
-    // through TleStore rather than opening the NVS namespace a second time -
-    // two read-write Preferences handles on one namespace is a corruption risk.
+    // Only stamp the age after both cache writes actually succeeded. This
+    // goes through TleStore rather than opening the NVS namespace a second
+    // time - two read-write Preferences handles on one namespace is a
+    // corruption risk.
     tlestore::markFetched(nowUnix);
 
     backoffMs = BACKOFF_START_MS;
     nextAttemptMs = millis() + 60UL * 1000UL;
 
-    // Drive the rebuild from the vector we already parsed above - never parse
-    // the fetched body twice.
-    rebuildFromParsed(tles);
+    rebuildFromGroups(stationsRaw, visualRaw);
 }
 
 void sampleTrails(int64_t nowUnix, const Observer& obs) {
@@ -177,10 +223,11 @@ namespace scope {
 void begin() {
     tlestore::begin();
 
-    const String cached = tlestore::load();
-    if (cached.length() > 0) {
+    const String s = tlestore::load("stations");
+    const String v = tlestore::load("visual");
+    if (s.length() > 0 || v.length() > 0) {
         Serial.println("[scope] loading cached element sets");
-        rebuildFrom(cached);
+        rebuildFromGroups(s, v);
     }
 }
 

@@ -1,5 +1,7 @@
 #include <Arduino.h>
+#include <esp_heap_caps.h>
 
+#include "CoreAlloc.h"
 #include "Config.h"
 #include "HttpApi.h"
 #include "Net.h"
@@ -7,10 +9,30 @@
 
 static Snapshot provide() { return scope::build(); }
 
+namespace {
+
+// Backs corealloc::alloc/free (lib/core/src/CoreAlloc.h) with PSRAM.
+// lib/core/ cannot include esp_heap_caps.h itself, so Propagator's SGP4
+// payloads go through this indirection instead - see CoreAlloc.h and the
+// Task 6 note in Propagator.h/.cpp.
+void* psramAlloc(std::size_t n) {
+    return heap_caps_malloc(n, MALLOC_CAP_SPIRAM);
+}
+
+void psramFree(void* p) {
+    heap_caps_free(p);
+}
+
+}  // namespace
+
 void setup() {
     Serial.begin(115200);
     delay(300);
     Serial.println("\n[boot] sky radar");
+
+    // Must run before anything that can call Propagator::init() - scope::begin()
+    // below loads cached element sets and rebuilds `tracked` immediately.
+    corealloc::setAllocator(&psramAlloc, &psramFree);
 
     config::begin();
 

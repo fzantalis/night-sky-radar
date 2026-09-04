@@ -4,9 +4,23 @@
 #include <Preferences.h>
 
 namespace {
-constexpr const char* TLE_PATH     = "/tle_stations.txt";
-constexpr const char* TLE_TMP_PATH = "/tle_stations.tmp";
+
 Preferences store;
+
+String pathFor(const char* group) {
+    String p = "/tle_";
+    p += group;
+    p += ".txt";
+    return p;
+}
+
+String tmpPathFor(const char* group) {
+    String p = "/tle_";
+    p += group;
+    p += ".tmp";
+    return p;
+}
+
 }  // namespace
 
 namespace tlestore {
@@ -21,12 +35,15 @@ void begin() {
 // write of bad content (see ScopeService::attemptRefresh, which validates the
 // parsed content before ever calling this) could otherwise leave the device
 // with no usable cache at all. The rename is atomic on LittleFS.
-bool save(const String& raw) {
-    if (LittleFS.exists(TLE_TMP_PATH)) {
-        LittleFS.remove(TLE_TMP_PATH);   // stale leftover from a prior failed write
+bool save(const char* group, const String& raw) {
+    const String tmpPath = tmpPathFor(group);
+    const String path    = pathFor(group);
+
+    if (LittleFS.exists(tmpPath)) {
+        LittleFS.remove(tmpPath);   // stale leftover from a prior failed write
     }
 
-    File f = LittleFS.open(TLE_TMP_PATH, "w");
+    File f = LittleFS.open(tmpPath, "w");
     if (!f) {
         Serial.println("[tle] cache open for write failed");
         return false;
@@ -36,20 +53,20 @@ bool save(const String& raw) {
 
     if (written != raw.length()) {
         Serial.println("[tle] cache short write");
-        LittleFS.remove(TLE_TMP_PATH);
+        LittleFS.remove(tmpPath);
         return false;
     }
 
-    if (!LittleFS.rename(TLE_TMP_PATH, TLE_PATH)) {
+    if (!LittleFS.rename(tmpPath, path)) {
         Serial.println("[tle] cache rename failed");
-        LittleFS.remove(TLE_TMP_PATH);
+        LittleFS.remove(tmpPath);
         return false;
     }
     return true;
 }
 
-String load() {
-    File f = LittleFS.open(TLE_PATH, "r");
+String load(const char* group) {
+    File f = LittleFS.open(pathFor(group), "r");
     if (!f) return String();
     String raw = f.readString();
     f.close();
