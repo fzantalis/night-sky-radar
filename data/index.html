@@ -7,4 +7,23 @@
   <canvas id="scope" width="240" height="240"></canvas>
 </div>
 <div id="hint">240&times;240 panel simulator &mdash; arrow keys and enter only</div>
+
+<div id="roster-wrap">
+  <div id="roster-caption">tracked objects &mdash; debug view, not on the panel</div>
+  <div id="roster-scroll">
+    <table id="roster">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>El</th>
+          <th>Bearing</th>
+          <th>Mag</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="roster-body"></tbody>
+    </table>
+  </div>
+</div>
+
 <script src="/radar.js"></script>

@@ -58,3 +58,67 @@ form button {
 }
 
 form a { color: #c9503c; opacity: 0.6; text-align: center; }
+
+/* Roster: a companion/debug view below the panel simulator, NOT part of the
+   instrument. Same palette as radar.js's P (bg #060305/#0a0708, text #c9503c,
+   dim borders #3a1210/#5a1c17/#6b241d), but plain HTML chrome so it never
+   reads as canvas content. #d8f4ff stays reserved for "visible right now". */
+#roster-wrap {
+  width: 720px;
+  max-width: 92vw;
+}
+
+#roster-caption {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.45;
+  margin-bottom: 6px;
+}
+
+#roster-scroll {
+  overflow-x: auto;
+  width: 100%;
+}
+
+#roster {
+  width: 100%;
+  border-collapse: collapse;
+  background: #0a0708;
+  border: 1px solid #3a1210;
+}
+
+#roster th,
+#roster td {
+  text-align: left;
+  padding: 5px 9px;
+  border-bottom: 1px solid #3a1210;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+#roster th {
+  color: #6b241d;
+  font-weight: normal;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+#roster td { color: #c9503c; }
+
+#roster tbody tr:last-child td { border-bottom: none; }
+
+/* The row the panel's status arc is currently cycling to. */
+#roster tbody tr.roster-active {
+  background: #17090a;
+  box-shadow: inset 3px 0 0 #6b241d;
+}
+
+/* visible=true right now. #d8f4ff is reserved for this state alone. */
+#roster tbody tr.roster-visible td { color: #d8f4ff; }
+
+#roster .roster-empty {
+  text-align: center;
+  opacity: 0.5;
+  padding: 10px;
+}
