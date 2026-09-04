@@ -303,8 +303,8 @@ void loop() {
         lastSnapshot = build();
     }
 
-    // hasLocation() takes the NVS mutex for four lookups; only pay for it
-    // when the trail timer actually fires, not on every spin of loop().
+    // hasLocation() takes the NVS mutex for four lookups; it is called both by
+    // build() (~1 Hz via the snapshot cache) and when the trail timer fires.
     if (millis() - lastTrailMs >= TRAIL_INTERVAL_MS) {
         lastTrailMs = millis();
         if (!config::hasLocation()) return;

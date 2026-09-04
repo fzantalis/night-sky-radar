@@ -123,6 +123,24 @@ void test_brightness_never_exceeds_the_cap(void) {
     }
 }
 
+void test_colour_constants_respect_brightness_cap(void) {
+    // The clamp in scale() is a guard against future colour-formula changes.
+    // This test pins the invariant it exists to protect: no colour constant
+    // used by ledFor can exceed LED_MAX_BRIGHTNESS. If this test fails after
+    // a colour constant edit, the clamp may have been bypassed.
+    TEST_ASSERT_TRUE(ColorChannels::SETUP_RED <= LED_MAX_BRIGHTNESS);
+    TEST_ASSERT_TRUE(ColorChannels::SETUP_GREEN <= LED_MAX_BRIGHTNESS);
+    TEST_ASSERT_TRUE(ColorChannels::SETUP_BLUE <= LED_MAX_BRIGHTNESS);
+
+    TEST_ASSERT_TRUE(ColorChannels::VISIBLE_RED <= LED_MAX_BRIGHTNESS);
+    TEST_ASSERT_TRUE(ColorChannels::VISIBLE_GREEN <= LED_MAX_BRIGHTNESS);
+    TEST_ASSERT_TRUE(ColorChannels::VISIBLE_BLUE <= LED_MAX_BRIGHTNESS);
+
+    TEST_ASSERT_TRUE(ColorChannels::ALERT_RED <= LED_MAX_BRIGHTNESS);
+    TEST_ASSERT_TRUE(ColorChannels::ALERT_GREEN <= LED_MAX_BRIGHTNESS);
+    TEST_ASSERT_TRUE(ColorChannels::ALERT_BLUE <= LED_MAX_BRIGHTNESS);
+}
+
 void test_a_nearer_pass_pulses_faster(void) {
     // Urgency should be legible without reading the dial. Count how many times
     // brightness reverses direction over a fixed window; a shorter period
@@ -159,6 +177,7 @@ int main(int, char**) {
     RUN_TEST(test_visible_now_outranks_an_imminent_pass);
     RUN_TEST(test_brightness_breathes_over_phase);
     RUN_TEST(test_brightness_never_exceeds_the_cap);
+    RUN_TEST(test_colour_constants_respect_brightness_cap);
     RUN_TEST(test_a_nearer_pass_pulses_faster);
     return UNITY_END();
 }

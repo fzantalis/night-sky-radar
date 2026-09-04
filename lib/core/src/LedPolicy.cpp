@@ -37,9 +37,9 @@ LedColor ledFor(const Snapshot& s, uint32_t phaseMs) {
     if (s.status == ScopeStatus::NoTime || s.status == ScopeStatus::NoLocation) {
         const double br = breathe(phaseMs, static_cast<uint32_t>(SETUP_PERIOD_MS), 0.15);
         LedColor c;
-        c.r = scale(static_cast<double>(LED_MAX_BRIGHTNESS), br);
-        c.g = scale(static_cast<double>(LED_MAX_BRIGHTNESS) * 0.55, br);
-        c.b = 0;
+        c.r = scale(ColorChannels::SETUP_RED, br);
+        c.g = scale(ColorChannels::SETUP_GREEN, br);
+        c.b = scale(ColorChannels::SETUP_BLUE, br);
         return c;
     }
 
@@ -53,9 +53,9 @@ LedColor ledFor(const Snapshot& s, uint32_t phaseMs) {
     if (anyVisibleNow) {
         const double br = breathe(phaseMs, static_cast<uint32_t>(VISIBLE_PERIOD_MS), 0.15);
         LedColor c;
-        c.r = scale(static_cast<double>(LED_MAX_BRIGHTNESS) * 0.55, br);
-        c.g = scale(static_cast<double>(LED_MAX_BRIGHTNESS) * 0.85, br);
-        c.b = scale(static_cast<double>(LED_MAX_BRIGHTNESS), br);
+        c.r = scale(ColorChannels::VISIBLE_RED, br);
+        c.g = scale(ColorChannels::VISIBLE_GREEN, br);
+        c.b = scale(ColorChannels::VISIBLE_BLUE, br);
         return c;
     }
 
@@ -79,9 +79,9 @@ LedColor ledFor(const Snapshot& s, uint32_t phaseMs) {
         const double periodMs = ALERT_PERIOD_NEAR_MS + frac * (ALERT_PERIOD_FAR_MS - ALERT_PERIOD_NEAR_MS);
         const double br = breathe(phaseMs, static_cast<uint32_t>(periodMs), 0.15);
         LedColor c;
-        c.r = scale(static_cast<double>(LED_MAX_BRIGHTNESS), br);
-        c.g = 0;
-        c.b = 0;
+        c.r = scale(ColorChannels::ALERT_RED, br);
+        c.g = scale(ColorChannels::ALERT_GREEN, br);
+        c.b = scale(ColorChannels::ALERT_BLUE, br);
         return c;
     }
 
