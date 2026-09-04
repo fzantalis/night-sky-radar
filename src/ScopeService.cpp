@@ -153,6 +153,15 @@ void rebuildFromGroups(const String& stationsRaw, const String& visualRaw) {
 }
 
 bool refreshDue(int64_t nowUnix) {
+    // A fresh timestamp with nothing tracked means the cache is gone while the
+    // NVS stamp survived. That is exactly what `pio run -t uploadfs` does: it
+    // rewrites the LittleFS partition holding the TLE cache, while the fetch
+    // timestamp lives in NVS on a different partition. Without this the device
+    // sits blind for up to REFRESH_HOURS, serving zero blips while cheerfully
+    // reporting its data is fresh. The backoff in attemptRefresh() still gates
+    // retries, so this cannot spin.
+    if (tracked.empty()) return true;
+
     const double age = tlestore::ageHours(nowUnix);
     if (age < 0.0) return true;                       // never fetched
     return age >= static_cast<double>(REFRESH_HOURS);
