@@ -1,9 +1,14 @@
 #include <unity.h>
+#include <cmath>
+#include <cstdio>
 #include <vector>
 #include "PassPredictor.h"
 #include "Propagator.h"
 #include "Tle.h"
 #include "Observer.h"
+#include "TimeUtils.h"
+#include "Topocentric.h"
+#include "Visibility.h"
 
 // ISS element set. The absolute epoch matters only in that predictions are made
 // relative to it, so the test asks for passes starting at the epoch itself.
@@ -130,6 +135,64 @@ void test_zero_hour_horizon_returns_nothing(void) {
         predictPasses(issProp(), athens, -1.8, issEpochUnix(), 0, nullptr).size()));
 }
 
+// --- refineCrossing bisection (regression for the set-side dead-loop bug) --
+
+// Independently recomputes elevation at a given instant from the same TLE,
+// the same way PassPredictor's internal elevationAt() does it. Deliberately
+// duplicated rather than reusing PassPredictor's anonymous-namespace helper,
+// so this test exercises the public look()/gmstDegrees()/julianDate() path
+// on its own and cannot silently share a bug with the code under test.
+static double independentElevationDeg(Propagator& prop, const Observer& obs, int64_t t) {
+    Vec3 pos;
+    TEST_ASSERT_TRUE(prop.positionAt(t, pos));
+    const double gmst = timeutils::gmstDegrees(timeutils::julianDate(t));
+    return look(pos, obs, gmst).elDeg;
+}
+
+void test_rise_and_set_land_on_the_elevation_floor(void) {
+    Observer athens{37.98, 23.73, 0.1};
+    std::vector<Pass> passes = predictPasses(issProp(), athens, -1.8,
+                                             issEpochUnix(), 24, nullptr);
+    TEST_ASSERT_TRUE(passes.size() > 0);
+
+    Propagator checkProp = issProp();
+    for (const Pass& p : passes) {
+        const double riseEl = independentElevationDeg(checkProp, athens, p.riseUnix);
+        const double setEl  = independentElevationDeg(checkProp, athens, p.setUnix);
+        // A properly bisected crossing lands within about a second of the
+        // true crossing, so its elevation is essentially exactly the floor.
+        // An unrefined 30-second grid sample (the set-side dead-loop bug)
+        // is off by a degree or more for a LEO pass.
+        TEST_ASSERT_TRUE(std::fabs(riseEl - MIN_ELEVATION_DEG) < 0.2);
+        TEST_ASSERT_TRUE(std::fabs(setEl  - MIN_ELEVATION_DEG) < 0.2);
+    }
+}
+
+// --- Pass::visible wiring ---------------------------------------------------
+
+void test_visible_flag_distinguishes_passes_over_a_week(void) {
+    Observer athens{37.98, 23.73, 0.1};
+    std::vector<Pass> passes = predictPasses(issProp(), athens, -1.8,
+                                             issEpochUnix(), 24 * 7, nullptr);
+    TEST_ASSERT_TRUE(passes.size() > 0);
+
+    int visibleCount = 0;
+    int notVisibleCount = 0;
+    for (const Pass& p : passes) {
+        if (p.visible) {
+            ++visibleCount;
+        } else {
+            ++notVisibleCount;
+        }
+    }
+    std::printf("test_visible_flag_distinguishes_passes_over_a_week: "
+                "%d passes, %d visible, %d not visible\n",
+                static_cast<int>(passes.size()), visibleCount, notVisibleCount);
+
+    TEST_ASSERT_TRUE(visibleCount > 0);
+    TEST_ASSERT_TRUE(notVisibleCount > 0);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_iss_can_rise_at_athens);
@@ -146,5 +209,7 @@ int main(int, char**) {
     RUN_TEST(test_no_passes_where_the_filter_says_impossible);
     RUN_TEST(test_yield_callback_is_invoked);
     RUN_TEST(test_zero_hour_horizon_returns_nothing);
+    RUN_TEST(test_rise_and_set_land_on_the_elevation_floor);
+    RUN_TEST(test_visible_flag_distinguishes_passes_over_a_week);
     return UNITY_END();
 }

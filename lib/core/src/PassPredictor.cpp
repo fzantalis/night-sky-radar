@@ -1,6 +1,7 @@
 #include "PassPredictor.h"
 
 #include <cmath>
+#include <cstdlib>
 
 #include "Eclipse.h"
 #include "Solar.h"
@@ -29,10 +30,15 @@ double elevationAt(Propagator& prop, const Observer& obs, int64_t t) {
 }
 
 // Finds the instant between `lo` and `hi` where elevation crosses the floor.
-// Requires the two ends to straddle the crossing.
+// Requires the two ends to straddle the crossing. `lo` must sit below the
+// elevation floor and `hi` above it, but the two are not required to be in
+// chronological order: the set-side caller deliberately passes a `hi` that
+// is chronologically earlier than `lo` so this same floor-straddling
+// invariant holds for both rise and set. The loop guard must therefore
+// compare the magnitude of the gap, not its raw (possibly negative) sign.
 int64_t refineCrossing(Propagator& prop, const Observer& obs,
                        int64_t lo, int64_t hi) {
-    for (int i = 0; i < BISECTION_ROUNDS && hi - lo > 1; ++i) {
+    for (int i = 0; i < BISECTION_ROUNDS && std::llabs(hi - lo) > 1; ++i) {
         const int64_t mid = lo + (hi - lo) / 2;
         if (elevationAt(prop, obs, mid) < MIN_ELEVATION_DEG) {
             lo = mid;
