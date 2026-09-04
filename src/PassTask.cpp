@@ -53,6 +53,18 @@ void yieldToScheduler() {
 // anything yet - see the NO_INPUT_RETRY_MS note above for why taskLoop()
 // needs to tell this case apart from "just finished a real sweep".
 bool computeOnce() {
+    // The project's standing rule: never propagate without a valid clock.
+    // ScopeService enforces this in two places; PassTask did not, and the
+    // omission was live. PassTask receives its TLE input from the LittleFS
+    // cache during scope::begin(), which completes BEFORE NTP syncs. Without
+    // this guard the task ran a full 24 h sweep against a 1970 clock: it found
+    // 8 meaningless "passes", stamped computedAt with a near-zero value, and
+    // every countdown then rebased to roughly minus 56 years and was dropped
+    // by upcoming() as already-started - so /api/scope reported zero events
+    // while the serial log cheerfully claimed 8. Returning false retries in
+    // NO_INPUT_RETRY_MS rather than sleeping the full recompute interval.
+    if (!net::timeValid()) return false;
+
     std::vector<Tle> tles;
     Observer obs;
 
