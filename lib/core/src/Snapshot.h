@@ -44,6 +44,16 @@ struct Ring {
 // visibility floor, and the elevation-0 horizon.
 std::vector<Ring> defaultSkyRings();
 
+// A predicted upcoming visible pass, as read from passtask::upcoming(). This
+// is display data, already rebased onto the snapshot's own `t` - renderers
+// never recompute a countdown, they just format one.
+struct Event {
+    std::string name;
+    int64_t     startsIn = 0;     // seconds from the snapshot's t
+    double      maxEl    = 0.0;
+    bool        visible  = false;
+};
+
 struct Snapshot {
     int64_t     t            = 0;
     ScopeStatus status       = ScopeStatus::NoTime;
@@ -51,6 +61,7 @@ struct Snapshot {
     std::vector<Blip> blips;
     std::vector<Ring> rings  = defaultSkyRings();
     double      sunAltDeg    = 0.0;
+    std::vector<Event> events;
 };
 
 // Sorts visible objects first, then by ascending r (higher in the sky first),

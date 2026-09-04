@@ -9,6 +9,7 @@
 
 #include "Config.h"
 #include "Net.h"
+#include "PassTask.h"
 #include "PsramAllocator.h"
 #include "TleFetcher.h"
 #include "TleStore.h"
@@ -134,6 +135,14 @@ void rebuildFromGroups(const String& stationsRaw, const String& visualRaw) {
     Serial.printf("[scope] rebuild heap %u -> %u (delta %ld), psram %u -> %u (delta %ld)\n",
                   heapBefore, heapAfter, static_cast<long>(heapAfter) - static_cast<long>(heapBefore),
                   psramBefore, psramAfter, static_cast<long>(psramAfter) - static_cast<long>(psramBefore));
+
+    // Hand the freshly-parsed element sets to the prediction task. It copies
+    // them again internally before releasing our mutex, and builds its own
+    // Propagator instances - never a reference into `tracked` above, which
+    // this same function can clear() from the other core mid-prediction.
+    if (config::hasLocation()) {
+        passtask::submit(parsed, config::observer());
+    }
 }
 
 bool refreshDue(int64_t nowUnix) {
@@ -335,6 +344,8 @@ Snapshot build() {
 
         s.blips.push_back(b);
     }
+
+    s.events = passtask::upcoming(s.t);
 
     rankAndCap(s);
     return s;

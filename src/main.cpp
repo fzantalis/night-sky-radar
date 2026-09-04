@@ -5,6 +5,7 @@
 #include "Config.h"
 #include "HttpApi.h"
 #include "Net.h"
+#include "PassTask.h"
 #include "ScopeService.h"
 
 static Snapshot provide() { return scope::build(); }
@@ -42,6 +43,22 @@ void setup() {
     // mounted before it tries to load the cached element sets, so this must
     // run first.
     httpapi::begin(&provide);
+
+    // Must run after corealloc::setAllocator() above (the prediction task
+    // builds its own Propagators, which allocate their SGP4 payloads through
+    // corealloc::alloc() - see the non-atomic g_alloc/g_free note in
+    // CoreAlloc.cpp) and, just as importantly, before scope::begin() below:
+    // scope::begin() loads the cached element sets and immediately calls
+    // passtask::submit() with them, and submit() is a silent no-op until
+    // begin() has created the task's mutex. Submitting after begin() means
+    // the very first boot has to wait out a full refresh cycle (up to
+    // REFRESH_HOURS) before any pass is predicted.
+    Serial.printf("[boot] heap %u, psram %u before passtask::begin()\n",
+                  ESP.getFreeHeap(), ESP.getFreePsram());
+    passtask::begin();
+    Serial.printf("[boot] heap %u, psram %u after passtask::begin()\n",
+                  ESP.getFreeHeap(), ESP.getFreePsram());
+
     scope::begin();
 
     Serial.printf("[boot] psram: %u bytes\n",

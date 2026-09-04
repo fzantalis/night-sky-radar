@@ -128,6 +128,20 @@ std::string toJson(const Snapshot& s) {
     }
     j += "]";
 
-    j += "}";
+    j += ",\"events\":[";
+    for (size_t i = 0; i < s.events.size(); ++i) {
+        const Event& e = s.events[i];
+        if (i > 0) j += ',';
+        j += "{\"name\":\"";
+        j += escape(e.name);
+        j += "\",\"startsIn\":";
+        j += std::to_string(e.startsIn);
+        j += ",\"maxEl\":";
+        j += num(e.maxEl, 1);
+        j += ",\"visible\":";
+        j += (e.visible ? "true" : "false");
+        j += '}';
+    }
+    j += "]}";
     return j;
 }

@@ -146,12 +146,23 @@ function statusLine() {
   switch (snap.status) {
     case 'no_time':     return 'NO TIME';
     case 'no_location': return 'OPEN /CONFIG';
-    case 'offline':     return 'OFFLINE';
   }
+
+  // A pending visible pass takes priority over the current-position readout.
+  if (snap.events && snap.events.length > 0) {
+    const e = snap.events[0];
+    const mins = Math.max(0, Math.round(e.startsIn / 60));
+    const when = mins >= 60 ? Math.round(mins / 60) + 'H' : mins + 'M';
+    const name = e.name.split(' ')[0].slice(0, 8);
+    return (name + ' ' + when + ' ' + Math.round(e.maxEl) + 'DEG').slice(0, 20);
+  }
+
+  if (snap.status === 'offline') return 'OFFLINE';
   if (!snap.blips || snap.blips.length === 0) return 'NOTHING UP';
+
   const b = snap.blips[0];
-  const el = Math.round(b.el);
-  return (b.name.split(' ')[0] + ' ' + el + 'DEG').slice(0, 20);
+  return (b.name.split(' ')[0].slice(0, 10) + ' ' +
+          Math.round(90 - b.r * 90) + 'DEG').slice(0, 20);
 }
 
 function drawStatus() {
