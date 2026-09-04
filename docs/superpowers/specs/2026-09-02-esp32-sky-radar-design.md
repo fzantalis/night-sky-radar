@@ -29,8 +29,18 @@ Hardware target is an ESP32-S3-DevKitC-1 N16R8 (16 MB flash, 8 MB octal PSRAM). 
 - **M3** Starlink train detection — stream-filter the ~8000-object `starlink` group by COSPAR launch designator, keeping only launches from the last ~14 days
 - **M4** Meteor shower radiants — static almanac, rendered as a glowing sector
 - **M5** NEO mode — JPL CAD API, Earth-centred, 10 lunar distances at the rim, time-scrubbed over 30 days rather than rendered live
-- **M6** GC9A01 renderer
-- **M7** NeoPixel bezel ring, rotary encoder, magnetometer, captive-portal config
+- **M6** GC9A01 renderer — gated on buying the panel
+- **M7** Rotary encoder, captive-portal config, enclosure — gated on M6
+
+**Revised 2026-09-04.** Two changes to the deferred list:
+
+- **The NeoPixel bezel ring is dropped in favour of the board's own WS2812 on GPIO48**,
+  and pulse notification moves forward from M7 into **M2**, where the visibility engine
+  first makes "a pass worth alerting on" a real concept. The onboard LED loses the ring's
+  rotating-sweep effects but keeps everything that matters (pulse, breathe, colour-code),
+  needs no library (`neopixelWrite(RGB_BUILTIN, ...)` ships in the Arduino core), and draws
+  ~5-10 mA dim-red against a 24-LED ring's ~720 mA at full white.
+- **The magnetometer is deferred indefinitely** — see 3.4.
 
 ### Explicitly rejected
 
@@ -93,9 +103,26 @@ The renderer only ever calls `screenHeading()`. Three implementations:
 
 - `FixedNorth` — always 0 degrees; used by the web simulator and during bring-up
 - `ManualNorth` — a stored offset set once via the rotary encoder (M7)
-- `MagnetometerNorth` — live compass heading (M7)
+- `MagnetometerNorth` — live compass heading (deferred indefinitely, see below)
 
 This makes the magnetometer a swappable upgrade rather than a dependency.
+
+**Decision 2026-09-04: the device is a STATIONARY INSTRUMENT, not a handheld pointer.**
+
+A one-time north offset is only correct while the device does not move. A handheld that
+rotates with you needs *live* heading, and only a magnetometer can supply that — GPS gives
+position not facing, an accelerometer gives tilt, a gyro drifts without an absolute
+reference, and a sun sighting is stale the moment you turn. A handheld would also need an
+accelerometer for tilt compensation, because a magnetometer held angled at the sky reads
+garbage.
+
+That hardware is deferred. The device instead does the thing that is actually useful
+outdoors: it states the bearing in words on the dial — `ISS 7m SE 142` — which you carry
+in your head and use outside, where you are looking up at the sky rather than down at a
+240-pixel screen that would ruin your dark adaptation anyway.
+
+`FixedNorth` is therefore the shipping implementation. The interface stays so that
+`ManualNorth` or `MagnetometerNorth` can be dropped in later without touching any maths.
 
 ### 3.5 Toolchain
 
