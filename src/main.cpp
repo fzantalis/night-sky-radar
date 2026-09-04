@@ -7,8 +7,12 @@
 #include "Net.h"
 #include "PassTask.h"
 #include "ScopeService.h"
+#include "StatusLed.h"
 
-static Snapshot provide() { return scope::build(); }
+// Reads the cached copy scope::loop() rebuilds at most once per second -
+// never build() directly, so an HTTP request never triggers its own
+// propagation pass over every tracked object.
+static Snapshot provide() { return scope::currentSnapshot(); }
 
 namespace {
 
@@ -61,6 +65,8 @@ void setup() {
 
     scope::begin();
 
+    statusled::begin();
+
     Serial.printf("[boot] psram: %u bytes\n",
                   static_cast<unsigned>(ESP.getPsramSize()));
 }
@@ -69,6 +75,7 @@ void loop() {
     net::loop();
     scope::loop();
     httpapi::loop();
+    statusled::update(scope::currentSnapshot());
 
     // All three return promptly, so without this loop() spins at 100% on
     // core 1 and permanently starves the idle task (watchdog feed, RTOS

@@ -52,6 +52,13 @@ uint32_t nextAttemptMs = 0;
 uint32_t backoffMs     = BACKOFF_START_MS;
 uint32_t lastTrailMs   = 0;
 
+// Cached copy of the last build() result, refreshed at most once per second
+// from loop(). An HTTP request and the status LED both read this instead of
+// triggering their own propagation pass over every tracked object - see
+// currentSnapshot() below.
+Snapshot lastSnapshot;
+uint32_t lastBuildMs = 0;
+
 // Per-group validation baselines - the last element count that group
 // validated and saved successfully. 0 means "no history yet" (fresh install,
 // or that group has never had a successful fetch). Deliberately *not* a
@@ -284,6 +291,18 @@ void loop() {
         attemptRefresh(now);
     }
 
+    // Rebuild the cached snapshot at most once per second. Rollover-safe, same
+    // pattern as the trail timer below. This runs ahead of the hasLocation()
+    // early-return just below so the cache still reflects NoLocation status
+    // (build() itself checks) rather than getting stuck on whatever the last
+    // build happened to be - the status LED and every HTTP request read only
+    // this cached copy now, instead of each triggering its own propagation
+    // pass over ~200 tracked objects.
+    if (millis() - lastBuildMs >= 1000) {
+        lastBuildMs = millis();
+        lastSnapshot = build();
+    }
+
     // hasLocation() takes the NVS mutex for four lookups; only pay for it
     // when the trail timer actually fires, not on every spin of loop().
     if (millis() - lastTrailMs >= TRAIL_INTERVAL_MS) {
@@ -291,6 +310,10 @@ void loop() {
         if (!config::hasLocation()) return;
         sampleTrails(now, config::observer());
     }
+}
+
+const Snapshot& currentSnapshot() {
+    return lastSnapshot;
 }
 
 Snapshot build() {
