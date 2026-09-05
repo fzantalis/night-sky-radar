@@ -4,6 +4,8 @@
 #include "CoreAlloc.h"
 #include "Config.h"
 #include "HttpApi.h"
+#include "ModeButton.h"
+#include "NeoService.h"
 #include "Net.h"
 #include "PassTask.h"
 #include "ScopeService.h"
@@ -65,7 +67,12 @@ void setup() {
 
     scope::begin();
 
+    // Needs the LittleFS mount httpapi::begin() performed above, same as
+    // scope::begin() does - it loads the cached close-approach list.
+    neoservice::begin();
+
     statusled::begin();
+    modebutton::begin();
 
     Serial.printf("[boot] psram: %u bytes\n",
                   static_cast<unsigned>(ESP.getPsramSize()));
@@ -75,6 +82,7 @@ void loop() {
     net::loop();
     scope::loop();
     httpapi::loop();
+    modebutton::update();
     statusled::update(scope::currentSnapshot());
 
     // All three return promptly, so without this loop() spins at 100% on

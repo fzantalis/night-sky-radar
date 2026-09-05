@@ -5,6 +5,14 @@
 
 namespace tlefetcher {
 
+// The shared multi-root trust store defined in TleFetcher.cpp. Exposed so
+// every HTTPS client in this firmware verifies against the same roots rather
+// than carrying its own copy of the same certificates. M5's JPL fetch needs no
+// new root: ssd-api.jpl.nasa.gov chains through Entrust to "Sectigo Public
+// Server Authentication Root R46", which is already the first root in this
+// store (verified with `openssl s_client -showcerts`, 2026-09-05).
+const char* trustedRootsPem();
+
 // Blocking HTTPS fetch of one CelesTrak group. The TLS client is fully torn
 // down before returning - never hold one open, never run two concurrently.
 bool fetchGroup(const char* group, String& outRaw);

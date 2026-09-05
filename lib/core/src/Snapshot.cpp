@@ -1,17 +1,48 @@
 #include "Snapshot.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 #include "Projection.h"
 
 std::vector<Ring> defaultSkyRings() {
     return {
-        {60.0, skyRadius(60.0), "grid"},
-        {30.0, skyRadius(30.0), "grid"},
-        {10.0, skyRadius(10.0), "floor"},
-        {0.0,  skyRadius(0.0),  "horizon"},
+        {60.0, skyRadius(60.0), "grid",    ""},
+        {30.0, skyRadius(30.0), "grid",    ""},
+        {10.0, skyRadius(10.0), "floor",   ""},
+        {0.0,  skyRadius(0.0),  "horizon", ""},
     };
+}
+
+std::vector<Ring> defaultNeoRings(double rimLd) {
+    if (!(rimLd > 0.0)) return {};
+
+    // Only rings that fall inside the dial are emitted, so shrinking the rim
+    // does not produce rings drawn past the edge.
+    const double marks[] = {1.0, 2.0, 5.0, 10.0};
+    std::vector<Ring> out;
+    for (const double ld : marks) {
+        if (ld > rimLd) continue;
+        Ring r;
+        r.elevationDeg = 0.0;              // meaningless here; label carries it
+        r.r            = ld / rimLd;
+        r.kind         = (ld == 1.0) ? "moon" : "grid";
+        char buf[24];
+        std::snprintf(buf, sizeof(buf), "%g LD", ld);
+        r.label = buf;
+        out.push_back(r);
+    }
+    return out;
+}
+
+double estimatedDiameterMetres(double hMag, double albedo) {
+    if (!std::isfinite(hMag) || hMag > 90.0) return 0.0;
+    if (!std::isfinite(albedo) || albedo <= 0.0) return 0.0;
+    // D(km) = 1329 / sqrt(albedo) * 10^(-H/5), then to metres.
+    const double km = (1329.0 / std::sqrt(albedo)) * std::pow(10.0, -hMag / 5.0);
+    if (!std::isfinite(km) || km < 0.0) return 0.0;
+    return km * 1000.0;
 }
 
 namespace {
@@ -24,6 +55,14 @@ const char* statusName(ScopeStatus s) {
         case ScopeStatus::Offline:     return "offline";
     }
     return "no_time";
+}
+
+const char* modeName(ScopeMode m) {
+    switch (m) {
+        case ScopeMode::Sky: return "sky";
+        case ScopeMode::Neo: return "neo";
+    }
+    return "sky";
 }
 
 // Minimal JSON string escaping. Object names come from CelesTrak and are plain
@@ -72,7 +111,9 @@ std::string toJson(const Snapshot& s) {
 
     j += "{\"t\":";
     j += std::to_string(s.t);
-    j += ",\"status\":\"";
+    j += ",\"mode\":\"";
+    j += modeName(s.mode);
+    j += "\",\"status\":\"";
     j += statusName(s.status);
     j += "\",\"tleAgeHours\":";
     j += num(s.tleAgeHours, 2);
@@ -131,6 +172,8 @@ std::string toJson(const Snapshot& s) {
         j += num(rg.r, 4);
         j += ",\"kind\":\"";
         j += escape(rg.kind);
+        j += "\",\"label\":\"";
+        j += escape(rg.label);
         j += "\"}";
     }
     j += "]";
@@ -167,6 +210,38 @@ std::string toJson(const Snapshot& s) {
         j += std::to_string(r.zhr);
         j += ",\"atPeak\":";
         j += (r.atPeak ? "true" : "false");
+        j += '}';
+    }
+    j += "]";
+
+    j += ",\"neoRimLd\":";
+    j += num(s.neoRimLd, 1);
+    j += ",\"neoAgeHours\":";
+    j += num(s.neoAgeHours, 2);
+    j += ",\"neos\":[";
+    for (size_t i = 0; i < s.neos.size(); ++i) {
+        const NeoApproachBlip& n = s.neos[i];
+        if (i > 0) j += ',';
+        j += "{\"name\":\"";
+        j += escape(n.name);
+        j += "\",\"fullname\":\"";
+        j += escape(n.fullname);
+        j += "\",\"r\":";
+        j += num(n.r, 4);
+        j += ",\"theta\":";
+        j += num(n.theta, 2);
+        j += ",\"distLd\":";
+        j += num(n.distLd, 3);
+        j += ",\"vRelKmS\":";
+        j += num(n.vRelKmS, 2);
+        j += ",\"hMag\":";
+        j += num(n.hMag, 2);
+        j += ",\"hKnown\":";
+        j += (n.hKnown ? "true" : "false");
+        j += ",\"approachIn\":";
+        j += std::to_string(n.approachIn);
+        j += ",\"diameterM\":";
+        j += num(n.estimatedDiameterM, 1);
         j += '}';
     }
     j += "]}";
