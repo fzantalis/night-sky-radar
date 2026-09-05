@@ -168,6 +168,8 @@ xJNDd2ZhwLnoQdeXeGADbkpyrqXRfboQnoZsG4q5WTP468SQvvG5
 
 namespace tlefetcher {
 
+const char* trustedRootsPem() { return kTrustedRootsPem; }
+
 bool fetchGroup(const char* group, String& outRaw) {
     outRaw = String();
 

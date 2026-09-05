@@ -37,6 +37,28 @@ Hardware target is an ESP32-S3-DevKitC-1 N16R8 (16 MB flash, 8 MB octal PSRAM). 
   for members of one launch.
 - **M4** Meteor shower radiants — static almanac, rendered as a glowing sector
 - **M5** NEO mode — JPL CAD API, Earth-centred, 10 lunar distances at the rim, time-scrubbed over 30 days rather than rendered live
+
+  **Implemented 2026-09-05, with the time scrub resolved as an axis rather than a control.**
+  "Time-scrubbed" left open how time reaches the dial. Making it a scrub *control*
+  would have needed an input the device does not have and a renderer that holds its
+  own clock state, breaking the dumb-polar-plotter rule. Instead **the angle itself is
+  time**: 0 degrees is now, a full turn is the 30-day window, and radius is the miss
+  distance with the rim at 10 lunar distances. Approaches march round towards the
+  fixed "now" hand as their date arrives, so the whole window is legible at once with
+  no control at all.
+
+  Two further decisions, both departures worth recording:
+
+  - **NEO mode does not require an observer location.** A close approach is an
+    Earth-centred event, so `build()` checks the mode *before* the `hasLocation()`
+    gate and the setup nag is suppressed there. The dial is meaningful on a device
+    that has never been told where it is.
+  - **Mode is not persisted.** After a power cut the instrument returns to SKY,
+    because "is anything up right now" is the question it exists to answer.
+
+  Switching is BOOT on the device and arrow keys or space in the browser, both
+  through `/api/mode` so the device and every open browser agree on one mode.
+  See `docs/third-party/NEO-CAD-PROVENANCE.md`.
 - **M6** GC9A01 renderer — gated on buying the panel
 - **M7** Rotary encoder, captive-portal config, enclosure — gated on M6
 
@@ -316,7 +338,7 @@ These are verification tasks, not undecided design questions:
 | M2 | Visibility engine, pass prediction, `visual` group; N2YO validation | none |
 | M3 | Starlink train stream-filter | none |
 | M4 | Meteor shower radiants | none |
-| M5 | NEO mode with time scrub | none |
+| M5 | NEO mode; angle is time, radius is miss distance | none |
 | M6 | GC9A01 renderer | round panel |
 | M7 | NeoPixel ring, encoder, magnetometer, captive portal | ring, encoder, compass |
 

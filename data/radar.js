@@ -20,6 +20,12 @@ const P = {
   // object visible right now, and must stay visually unmistakable from that.
   radiant:     '#e0293f',
   radiantPeak: '#ff6b57',
+  // M5: NEO mode. Still deep-red; #d8f4ff stays reserved for "satellite
+  // visible right now" even though NEO mode never draws a satellite, so the
+  // two modes can never be confused at a glance.
+  neo:      '#c9503c',
+  neoClose: '#ff6b57',   // inside one lunar distance
+  neoMoon:  '#8a2f26',   // the 1 LD reference ring
 };
 
 const cv = document.getElementById('scope');
@@ -61,7 +67,24 @@ function ring(rNorm, colour) {
 function ringColour(kind) {
   if (kind === 'floor') return P.floor;
   if (kind === 'horizon') return P.gridMid;
+  if (kind === 'moon') return P.neoMoon;
   return P.gridDim;
+}
+
+function isNeo() {
+  return !!(snap && snap.mode === 'neo');
+}
+
+// NEO mode's angular axis is time, not azimuth, so the compass points are
+// replaced by the window they actually represent. The core sends the window
+// implicitly (angle = fraction of it), so the quarter marks are derived here
+// from the one number the snapshot does carry.
+function timeLabels() {
+  const days = 30;
+  return [['NOW', 0],
+          ['+' + Math.round(days * 0.25) + 'D', 90],
+          ['+' + Math.round(days * 0.5) + 'D', 180],
+          ['+' + Math.round(days * 0.75) + 'D', 270]];
 }
 
 function drawChrome() {
@@ -87,10 +110,33 @@ function drawChrome() {
   g.font = '10px ui-monospace, monospace';
   g.textAlign = 'center';
   g.textBaseline = 'middle';
-  for (const [label, th] of [['N', 0], ['E', 90], ['S', 180], ['W', 270]]) {
+  const marks = isNeo() ? timeLabels()
+                        : [['N', 0], ['E', 90], ['S', 180], ['W', 270]];
+  for (const [label, th] of marks) {
     const [x, y] = polar(0.90, th);
     g.fillText(label, x, y);
   }
+
+  // Ring labels. The core sends an explicit label only where the radius means
+  // something other than an elevation, which today is NEO mode's lunar
+  // distances - so this needs no mode test of its own.
+  //
+  // Two placement problems have to be dodged. The outermost ring sits exactly
+  // on the rim, so its label needs pulling inside or it is clipped. And on a
+  // 10 LD dial the 1 LD ring is only a tenth of the radius, so its label lands
+  // on top of the Earth marker - it goes on the opposite diagonal and slightly
+  // outside its own ring, which keeps it legible without stacking on the 2 LD
+  // label.
+  g.font = '8px ui-monospace, monospace';
+  for (const rg of rings) {
+    if (!rg.label) continue;
+    const moon = rg.kind === 'moon';
+    const rr = moon ? rg.r + 0.07 : Math.min(rg.r, 0.93);
+    const [x, y] = polar(rr, moon ? 135 : 225);
+    g.fillStyle = moon ? P.neoClose : P.text;
+    g.fillText(rg.label, x, y);
+  }
+  g.font = '10px ui-monospace, monospace';
 }
 
 function drawSweep() {
@@ -216,13 +262,33 @@ function statusBlip() {
 
 // The bottom arc holds roughly 20 characters. Anything longer must be
 // shortened in the core, not here.
+// Days/hours until an approach, in the space the panel actually has.
+function untilText(seconds) {
+  if (!isFinite(seconds)) return '?';
+  const days = Math.floor(seconds / 86400);
+  if (days >= 1) return days + 'D';
+  return Math.max(0, Math.round(seconds / 3600)) + 'H';
+}
+
+function neoStatusLine() {
+  if (!snap.neos || snap.neos.length === 0) return 'NO CLOSE PASSES';
+  // The list arrives sorted by date, so the first entry is the next one due.
+  const n = snap.neos[0];
+  return (n.name.slice(0, 9) + ' ' + untilText(n.approachIn) + ' ' +
+          n.distLd.toFixed(1) + 'LD').slice(0, 20);
+}
+
 function statusLine() {
   if (linkLost()) return 'LINK LOST';   // failing long enough to call it dead
   if (!snap) return 'CONNECTING';       // still within the initial grace period
   switch (snap.status) {
     case 'no_time':     return 'NO TIME';
-    case 'no_location': return 'OPEN /CONFIG';
+    // NEO mode is Earth-centred, so it stays useful on a device that has
+    // never been told where it is - only SKY mode needs to nag about setup.
+    case 'no_location': if (!isNeo()) return 'OPEN /CONFIG'; break;
   }
+
+  if (isNeo()) return neoStatusLine();
 
   // A pending visible pass takes priority over the current-position readout.
   if (snap.events && snap.events.length > 0) {
@@ -248,7 +314,9 @@ function drawStatus() {
   g.textBaseline = 'middle';
   g.fillText(statusLine(), CX, 212);
 
-  if (snap && snap.tleAgeHours >= 0) {
+  if (isNeo()) {
+    g.fillText('NEO', CX, 28);
+  } else if (snap && snap.tleAgeHours >= 0) {
     g.fillText('TLE ' + snap.tleAgeHours.toFixed(0) + 'H', CX, 28);
   }
 }
@@ -280,12 +348,75 @@ function drawRadiants() {
   g.globalAlpha = 1;
 }
 
+// Dot size from estimated diameter, on a log scale - real close approaches
+// span roughly 5 m to 1 km, which no linear mapping can show at once. An
+// object with no known magnitude gets the floor size rather than vanishing.
+function neoRadius(diameterM) {
+  if (!isFinite(diameterM) || diameterM <= 0) return 2;
+  return Math.max(2, Math.min(6, 1.2 + Math.log10(diameterM) * 1.3));
+}
+
+// NEO mode. Radius is miss distance, angle is when - so there is no sweep
+// here: a sweep would imply the dial is scanning something live, when it is
+// actually a 30-day forecast. The "now" hand at zero degrees is fixed, and
+// approaches march round towards it as their date arrives.
+function drawNeos() {
+  const dim = linkLost() ? 0.4 : 1;
+
+  // Earth at the centre, since every radius on this dial is measured from it.
+  g.globalAlpha = dim;
+  g.fillStyle = P.gridMid;
+  g.beginPath();
+  g.arc(CX, CY, 3, 0, Math.PI * 2);
+  g.fill();
+
+  // The "now" hand.
+  const [nx, ny] = polar(1.0, 0);
+  g.strokeStyle = P.floor;
+  g.lineWidth = 1;
+  g.beginPath();
+  g.moveTo(CX, CY);
+  g.lineTo(nx, ny);
+  g.stroke();
+
+  const neos = (snap && snap.neos) ? snap.neos : [];
+  for (const n of neos) {
+    const [x, y] = polar(n.r, n.theta);
+    const close = n.distLd < 1.0;
+    const radius = neoRadius(n.diameterM);
+
+    if (close) {
+      // Inside the Moon's distance is the one case worth drawing attention
+      // to, so it gets a halo as well as the hotter colour.
+      const grad = g.createRadialGradient(x, y, 0, x, y, radius * 3);
+      grad.addColorStop(0, P.neoClose);
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      g.globalAlpha = dim * 0.5;
+      g.fillStyle = grad;
+      g.beginPath();
+      g.arc(x, y, radius * 3, 0, Math.PI * 2);
+      g.fill();
+    }
+
+    g.globalAlpha = dim;
+    g.fillStyle = close ? P.neoClose : P.neo;
+    g.beginPath();
+    g.arc(x, y, radius, 0, Math.PI * 2);
+    g.fill();
+  }
+  g.globalAlpha = 1;
+}
+
 function frame() {
   sweepDeg = (sweepDeg + 1.5) % 360;
   drawChrome();
-  drawSweep();
-  drawRadiants();
-  drawBlips();
+  if (isNeo()) {
+    drawNeos();
+  } else {
+    drawSweep();
+    drawRadiants();
+    drawBlips();
+  }
   drawStatus();
   requestAnimationFrame(frame);
 }
@@ -452,6 +583,59 @@ function renderShowers() {
   body.innerHTML = snap.radiants.map(showerRow).join('');
 }
 
+// --- NEO roster ---------------------------------------------------------
+
+function sizeText(diameterM) {
+  if (!isFinite(diameterM) || diameterM <= 0) return 'unknown';
+  if (diameterM >= 1000) return (diameterM / 1000).toFixed(1) + ' km';
+  return Math.round(diameterM) + ' m';
+}
+
+function approachText(seconds) {
+  if (!isFinite(seconds)) return '?';
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  if (days >= 1) return days + 'd ' + hours + 'h';
+  return hours + 'h';
+}
+
+function neoRow(n) {
+  // Inside the Moon's distance is the one row worth making obvious.
+  const classes = ['roster-row'];
+  if (n.distLd < 1.0) classes.push('roster-visible');
+  return '<tr class="' + classes.join(' ') + '">' +
+    '<td>' + escapeHtml(n.fullname || n.name) + '</td>' +
+    '<td>' + approachText(n.approachIn) + '</td>' +
+    '<td>' + n.distLd.toFixed(2) + ' LD</td>' +
+    '<td>' + sizeText(n.diameterM) + '</td>' +
+    '<td>' + n.vRelKmS.toFixed(1) + ' km/s</td>' +
+    '</tr>';
+}
+
+function renderNeos() {
+  const body = document.getElementById('neos-body');
+  if (!body) return;
+
+  if (!snap || !snap.neos || snap.neos.length === 0) {
+    body.innerHTML = '<tr><td class="roster-empty" colspan="5">NO CLOSE APPROACHES</td></tr>';
+    return;
+  }
+  body.innerHTML = snap.neos.map(neoRow).join('');
+}
+
+// Only one mode's tables are meaningful at a time; showing both would imply
+// the dial is drawing both.
+function applyModeVisibility() {
+  const neo = isNeo();
+  const show = (id, on) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = on ? '' : 'none';
+  };
+  show('roster-wrap',  !neo);
+  show('showers-wrap', !neo);
+  show('neos-wrap',     neo);
+}
+
 async function poll() {
   try {
     const res = await fetch('/api/scope', { cache: 'no-store' });
@@ -465,6 +649,8 @@ async function poll() {
   }
   renderRoster();
   renderShowers();
+  renderNeos();
+  applyModeVisibility();
 }
 
 setInterval(poll, 1000);
@@ -474,5 +660,25 @@ requestAnimationFrame(frame);
 // The panel has no touch input; this is a simulator-only convenience so the
 // setup state is not a dead end in the browser.
 cv.addEventListener('click', () => {
-  if (snap && snap.status === 'no_location') window.location.href = '/config';
+  if (snap && snap.status === 'no_location' && !isNeo()) window.location.href = '/config';
+});
+
+// Mode switching. The device itself has exactly one button (BOOT), which
+// toggles; the browser gets the arrow keys so either direction is direct.
+// Both go through /api/mode so the device and every open browser agree on
+// one mode rather than each holding their own idea of it.
+async function setMode(mode) {
+  try {
+    await fetch('/api/mode?mode=' + mode, { method: 'POST', cache: 'no-store' });
+    await poll();          // reflect it immediately instead of waiting a tick
+  } catch (e) {
+    // Same treatment as a failed poll: leave the last snapshot on screen.
+    consecutiveFailures++;
+  }
+}
+
+window.addEventListener('keydown', (ev) => {
+  if (ev.key === 'ArrowRight' || ev.key === 'ArrowDown') { setMode('neo'); ev.preventDefault(); }
+  if (ev.key === 'ArrowLeft'  || ev.key === 'ArrowUp')   { setMode('sky'); ev.preventDefault(); }
+  if (ev.key === ' ')                                    { setMode('toggle'); ev.preventDefault(); }
 });

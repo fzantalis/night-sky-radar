@@ -100,6 +100,33 @@ void handleConfigPost() {
 
 namespace httpapi {
 
+// M5 - switch between SKY and NEO projections.
+//
+// GET returns the current mode; POST sets it. Accepts ?mode=sky|neo, or
+// ?mode=toggle for the arrow-key binding in the browser, which does not want
+// to track which mode it is currently in.
+static void handleModeGet() {
+    server.send(200, "application/json",
+                String("{\"mode\":\"") +
+                (scope::mode() == ScopeMode::Neo ? "neo" : "sky") + "\"}");
+}
+
+static void handleModePost() {
+    const String want = server.arg("mode");
+    if (want == "sky") {
+        scope::setMode(ScopeMode::Sky);
+    } else if (want == "neo") {
+        scope::setMode(ScopeMode::Neo);
+    } else if (want == "toggle") {
+        scope::toggleMode();
+    } else {
+        server.send(400, "application/json",
+                    "{\"error\":\"mode must be sky, neo or toggle\"}");
+        return;
+    }
+    handleModeGet();
+}
+
 void begin(SnapshotProvider provider) {
     snapshotProvider = provider;
 
@@ -112,6 +139,8 @@ void begin(SnapshotProvider provider) {
     server.on("/radar.css", []() { if (!serveStatic("/radar.css",  "text/css"))        server.send(404, "text/plain", "not found"); });
     server.on("/radar.js",  []() { if (!serveStatic("/radar.js",   "application/javascript")) server.send(404, "text/plain", "not found"); });
     server.on("/api/scope", handleScope);
+    server.on("/api/mode",  HTTP_GET,  handleModeGet);
+    server.on("/api/mode",  HTTP_POST, handleModePost);
     server.on("/config",     []() { if (!serveStatic("/config.html", "text/html")) server.send(404, "text/plain", "not found"); });
     server.on("/api/config", HTTP_GET,  handleConfigGet);
     server.on("/api/config", HTTP_POST, handleConfigPost);

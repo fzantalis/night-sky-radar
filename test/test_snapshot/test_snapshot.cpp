@@ -303,6 +303,113 @@ void test_json_emits_radiant_fields(void) {
     TEST_ASSERT_TRUE(wellFormed(j));
 }
 
+// ------------------------------------------------------------------ M5: NEO
+
+void test_json_mode_defaults_to_sky(void) {
+    Snapshot s;
+    TEST_ASSERT_TRUE(contains(toJson(s), "\"mode\":\"sky\""));
+}
+
+void test_json_reports_neo_mode(void) {
+    Snapshot s;
+    s.mode = ScopeMode::Neo;
+    TEST_ASSERT_TRUE(contains(toJson(s), "\"mode\":\"neo\""));
+}
+
+void test_json_empty_neos_is_valid_array(void) {
+    Snapshot s;
+    s.mode = ScopeMode::Neo;
+    TEST_ASSERT_TRUE(wellFormed(toJson(s)));
+}
+
+void test_json_emits_neo_fields(void) {
+    Snapshot s;
+    s.status    = ScopeStatus::Ok;
+    s.mode      = ScopeMode::Neo;
+    s.neoRimLd  = 10.0;
+    s.rings     = defaultNeoRings(10.0);
+
+    NeoApproachBlip n;
+    n.name       = "2026 RG";
+    n.fullname   = "(2026 RG)";
+    n.r          = 0.1322;
+    n.theta      = 4.5;
+    n.distLd     = 1.322;
+    n.vRelKmS    = 12.40;
+    n.hMag       = 27.56;
+    n.hKnown     = true;
+    n.approachIn = 3600;
+    n.estimatedDiameterM = estimatedDiameterMetres(27.56);
+    s.neos.push_back(n);
+
+    const std::string j = toJson(s);
+    TEST_ASSERT_TRUE(contains(j, "\"name\":\"2026 RG\""));
+    TEST_ASSERT_TRUE(contains(j, "\"distLd\":1.322"));
+    TEST_ASSERT_TRUE(contains(j, "\"hKnown\":true"));
+    TEST_ASSERT_TRUE(contains(j, "\"approachIn\":3600"));
+    TEST_ASSERT_TRUE(wellFormed(j));
+}
+
+// Two entries, so the comma-joining path is exercised - the same gap that
+// went untested for blips until it was caught during M0-M1.
+void test_json_with_multiple_neos(void) {
+    Snapshot s;
+    s.mode = ScopeMode::Neo;
+    NeoApproachBlip a;
+    a.name = "2026 RG";
+    a.distLd = 1.3;
+    NeoApproachBlip b;
+    b.name = "2024 RV12";
+    b.distLd = 5.6;
+    s.neos.push_back(a);
+    s.neos.push_back(b);
+    const std::string j = toJson(s);
+    TEST_ASSERT_TRUE(contains(j, "2026 RG"));
+    TEST_ASSERT_TRUE(contains(j, "2024 RV12"));
+    TEST_ASSERT_TRUE(wellFormed(j));
+}
+
+void test_neo_rings_scale_to_the_rim(void) {
+    const auto rings = defaultNeoRings(10.0);
+    TEST_ASSERT_EQUAL(4, static_cast<int>(rings.size()));
+    // 1 LD on a 10 LD dial sits a tenth of the way out; 10 LD is the rim.
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, 0.1, rings[0].r);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, 1.0, rings[3].r);
+    TEST_ASSERT_EQUAL_STRING("moon", rings[0].kind.c_str());
+    TEST_ASSERT_EQUAL_STRING("1 LD", rings[0].label.c_str());
+}
+
+// Shrinking the rim must drop the rings that no longer fit, not draw them
+// outside the dial.
+void test_neo_rings_outside_the_rim_are_dropped(void) {
+    const auto rings = defaultNeoRings(3.0);
+    for (const Ring& r : rings) {
+        TEST_ASSERT_TRUE(r.r <= 1.0);
+    }
+    TEST_ASSERT_EQUAL(2, static_cast<int>(rings.size()));   // 1 LD and 2 LD only
+}
+
+void test_neo_rings_reject_a_degenerate_rim(void) {
+    TEST_ASSERT_EQUAL(0, static_cast<int>(defaultNeoRings(0.0).size()));
+    TEST_ASSERT_EQUAL(0, static_cast<int>(defaultNeoRings(-5.0).size()));
+}
+
+// Pinned against worked values of D = 1329/sqrt(0.14) * 10^(-H/5). H=27.56 is
+// the real 2026 RG figure and lands around 11 m; H=17.75 is the classic
+// 1 km-class threshold and must come out near 1000 m. Two points an order of
+// magnitude apart catch both a wrong coefficient and a wrong exponent.
+void test_diameter_estimate_matches_the_standard_relation(void) {
+    TEST_ASSERT_DOUBLE_WITHIN(1.0, 10.9, estimatedDiameterMetres(27.56));
+    TEST_ASSERT_DOUBLE_WITHIN(60.0, 1000.0, estimatedDiameterMetres(17.75));
+    // Brighter (smaller H) must mean bigger.
+    TEST_ASSERT_TRUE(estimatedDiameterMetres(20.0) > estimatedDiameterMetres(25.0));
+}
+
+void test_diameter_estimate_rejects_unknown_magnitude(void) {
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, 0.0, estimatedDiameterMetres(99.0));
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, 0.0, estimatedDiameterMetres(25.0, 0.0));
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_json_reports_timestamp_and_status);
@@ -329,5 +436,15 @@ int main(int, char**) {
     RUN_TEST(test_json_emits_event_fields);
     RUN_TEST(test_json_empty_radiants_is_valid_array);
     RUN_TEST(test_json_emits_radiant_fields);
+    RUN_TEST(test_json_mode_defaults_to_sky);
+    RUN_TEST(test_json_reports_neo_mode);
+    RUN_TEST(test_json_empty_neos_is_valid_array);
+    RUN_TEST(test_json_emits_neo_fields);
+    RUN_TEST(test_json_with_multiple_neos);
+    RUN_TEST(test_neo_rings_scale_to_the_rim);
+    RUN_TEST(test_neo_rings_outside_the_rim_are_dropped);
+    RUN_TEST(test_neo_rings_reject_a_degenerate_rim);
+    RUN_TEST(test_diameter_estimate_matches_the_standard_relation);
+    RUN_TEST(test_diameter_estimate_rejects_unknown_magnitude);
     return UNITY_END();
 }

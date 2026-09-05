@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "Config.h"
+#include "NeoService.h"
 #include "Net.h"
 #include "PassTask.h"
 #include "PsramAllocator.h"
@@ -111,6 +112,11 @@ uint32_t lastTrailMs   = 0;
 // currentSnapshot() below.
 Snapshot lastSnapshot;
 uint32_t lastBuildMs = 0;
+
+// Which projection build() produces. Not persisted to NVS on purpose: the
+// device should come back in SKY mode after a power cut, because that is the
+// mode that answers "is anything up right now".
+ScopeMode currentMode = ScopeMode::Sky;
 
 // Per-group validation baselines - the last element count that group
 // validated and saved successfully. 0 means "no history yet" (fresh install,
@@ -456,6 +462,11 @@ void loop() {
         attemptRefresh(now);
     }
 
+    // Serialised with the TLE refresh above by virtue of both running on this
+    // one loop - never two TLS handshakes at once, the same rule the CelesTrak
+    // group fetches follow among themselves.
+    neoservice::loop(now);
+
     // Rebuild the cached snapshot at most once per second. Rollover-safe, same
     // pattern as the trail timer below. This runs ahead of the hasLocation()
     // early-return just below so the cache still reflects NoLocation status
@@ -481,11 +492,53 @@ const Snapshot& currentSnapshot() {
     return lastSnapshot;
 }
 
+// Fills in the NEO projection. Takes the snapshot by value with `t`, `mode`
+// and `status` already decided, so the two build paths cannot disagree about
+// the instant they are describing.
+static Snapshot buildNeo(Snapshot s) {
+    s.status      = net::wifiUp() ? ScopeStatus::Ok : ScopeStatus::Offline;
+    s.neoRimLd    = neoservice::NEO_RIM_LD;
+    s.neoAgeHours = neoservice::ageHours(s.t);
+    s.rings       = defaultNeoRings(neoservice::NEO_RIM_LD);
+
+    for (const neo::Approach& a : neoservice::approaches()) {
+        const int64_t in = a.approachUnix - s.t;
+
+        // Drop approaches that have already happened. The fetch asks for
+        // date-min=now, but the cache lives up to NEO_REFRESH_HOURS, so by the
+        // end of that window the first few entries can be in the past. Left
+        // in, they would wrap round to just under 360 degrees and read as
+        // nearly a month away - the exact opposite of the truth.
+        if (in < 0) continue;
+
+        NeoApproachBlip n;
+        n.name     = a.des;
+        n.fullname = a.fullname;
+        neo::project(a, s.t, static_cast<double>(neoservice::NEO_WINDOW_DAYS),
+                     neoservice::NEO_RIM_LD, n.r, n.theta);
+        n.distLd     = a.distLd;
+        n.vRelKmS    = a.vRelKmS;
+        n.hMag       = a.hMag;
+        n.hKnown     = a.hKnown;
+        n.approachIn = in;
+        n.estimatedDiameterM = a.hKnown ? estimatedDiameterMetres(a.hMag) : 0.0;
+        s.neos.push_back(n);
+    }
+    return s;
+}
+
 Snapshot build() {
     Snapshot s;
-    s.t = net::nowUnix();
+    s.t    = net::nowUnix();
+    s.mode = currentMode;
 
     if (!net::timeValid())      { s.status = ScopeStatus::NoTime;     return s; }
+
+    // Before the location check, deliberately: an asteroid close approach is
+    // an Earth-centred event, so NEO mode works on a device that has never
+    // been told where it is.
+    if (currentMode == ScopeMode::Neo) return buildNeo(s);
+
     if (!config::hasLocation()) { s.status = ScopeStatus::NoLocation; return s; }
 
     s.status      = net::wifiUp() ? ScopeStatus::Ok : ScopeStatus::Offline;
@@ -563,6 +616,22 @@ Snapshot build() {
 
     rankAndCap(s);
     return s;
+}
+
+ScopeMode mode() { return currentMode; }
+
+void setMode(ScopeMode m) {
+    if (m == currentMode) return;
+    currentMode = m;
+    // Rebuild immediately rather than letting the once-per-second cache serve
+    // a snapshot in the old mode - a mode switch that takes a visible moment
+    // to appear reads as a missed keypress.
+    lastBuildMs  = millis();
+    lastSnapshot = build();
+}
+
+void toggleMode() {
+    setMode(currentMode == ScopeMode::Sky ? ScopeMode::Neo : ScopeMode::Sky);
 }
 
 void clearTrails() {
