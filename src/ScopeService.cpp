@@ -15,6 +15,8 @@
 #include "TleFetcher.h"
 #include "TleStore.h"
 
+#include "Celestial.h"
+#include "MeteorShowers.h"
 #include "Projection.h"
 #include "Propagator.h"
 #include "Solar.h"
@@ -75,6 +77,21 @@ int civilYearUtc(int64_t unixSeconds) {
     struct tm out;
     gmtime_r(&t, &out);
     return out.tm_year + 1900;
+}
+
+// Civil (UTC) month/day for MeteorShowers::activeShowers(), same reasoning as
+// civilYearUtc() above: activeShowers() takes plain ints so lib/core never
+// needs <ctime>. Using UTC rather than the observer's local date matches the
+// precedent already set by the train filter's civilYearUtc() - the observer
+// here is fixed in Greece (UTC+2/+3), so this can only be off by at most one
+// calendar day right at local midnight, never enough to miss or fabricate an
+// entire multi-day activity window.
+void civilMonthDayUtc(int64_t unixSeconds, int& month, int& day) {
+    const time_t t = static_cast<time_t>(unixSeconds);
+    struct tm out;
+    gmtime_r(&t, &out);
+    month = out.tm_mon + 1;
+    day   = out.tm_mday;
 }
 
 // Backing array lives in PSRAM (see PsramAllocator.h). Note this only
@@ -520,6 +537,29 @@ Snapshot build() {
     }
 
     s.events = passtask::upcoming(s.t);
+
+    // M4: meteor shower radiants. Fixed points on the celestial sphere, no
+    // propagation - only shown when the shower is active AND the radiant is
+    // above the horizon AND the sky is dark enough (meteors are invisible in
+    // daylight, matching the same MAX_SUN_ALT_DEG gate Visibility.h applies
+    // to satellite blips).
+    if (sunAltDeg < MAX_SUN_ALT_DEG) {
+        int month = 0, day = 0;
+        civilMonthDayUtc(s.t, month, day);
+        for (const MeteorShower* sh : activeShowers(month, day)) {
+            const LookAngles la = radiantLookAngles(sh->raDeg, sh->decDeg, obs, s.t);
+            if (la.elDeg < 0.0) continue;   // below the horizon, not observable yet
+
+            Radiant r;
+            r.name         = sh->name;
+            r.r            = skyRadius(la.elDeg);
+            r.theta        = la.azDeg;
+            r.elevationDeg = la.elDeg;
+            r.zhr          = sh->zhr;
+            r.atPeak       = (month == sh->peakMonth && day == sh->peakDay);
+            s.radiants.push_back(r);
+        }
+    }
 
     rankAndCap(s);
     return s;

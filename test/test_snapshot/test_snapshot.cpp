@@ -279,6 +279,30 @@ void test_json_emits_event_fields(void) {
     TEST_ASSERT_TRUE(contains(j, "\"maxEl\":67.0"));
 }
 
+void test_json_empty_radiants_is_valid_array(void) {
+    Snapshot s;
+    s.status = ScopeStatus::Ok;
+    TEST_ASSERT_TRUE(contains(toJson(s), "\"radiants\":[]"));
+}
+
+void test_json_emits_radiant_fields(void) {
+    Snapshot s;
+    s.status = ScopeStatus::Ok;
+    Radiant r;
+    r.name = "Perseids";
+    r.r = 0.32;
+    r.theta = 48.0;
+    r.elevationDeg = 55.0;
+    r.zhr = 100;
+    r.atPeak = true;
+    s.radiants.push_back(r);
+    const std::string j = toJson(s);
+    TEST_ASSERT_TRUE(contains(j, "\"name\":\"Perseids\""));
+    TEST_ASSERT_TRUE(contains(j, "\"zhr\":100"));
+    TEST_ASSERT_TRUE(contains(j, "\"atPeak\":true"));
+    TEST_ASSERT_TRUE(wellFormed(j));
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_json_reports_timestamp_and_status);
@@ -303,5 +327,7 @@ int main(int, char**) {
     RUN_TEST(test_json_blip_kind_train);
     RUN_TEST(test_json_empty_events_is_valid_array);
     RUN_TEST(test_json_emits_event_fields);
+    RUN_TEST(test_json_empty_radiants_is_valid_array);
+    RUN_TEST(test_json_emits_radiant_fields);
     return UNITY_END();
 }
