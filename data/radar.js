@@ -120,11 +120,20 @@ function drawChrome() {
   // Ring labels. The core sends an explicit label only where the radius means
   // something other than an elevation, which today is NEO mode's lunar
   // distances - so this needs no mode test of its own.
+  //
+  // Two placement problems have to be dodged. The outermost ring sits exactly
+  // on the rim, so its label needs pulling inside or it is clipped. And on a
+  // 10 LD dial the 1 LD ring is only a tenth of the radius, so its label lands
+  // on top of the Earth marker - it goes on the opposite diagonal and slightly
+  // outside its own ring, which keeps it legible without stacking on the 2 LD
+  // label.
   g.font = '8px ui-monospace, monospace';
   for (const rg of rings) {
     if (!rg.label) continue;
-    const [x, y] = polar(rg.r, 213);
-    g.fillStyle = rg.kind === 'moon' ? P.neoClose : P.text;
+    const moon = rg.kind === 'moon';
+    const rr = moon ? rg.r + 0.07 : Math.min(rg.r, 0.93);
+    const [x, y] = polar(rr, moon ? 135 : 225);
+    g.fillStyle = moon ? P.neoClose : P.text;
     g.fillText(rg.label, x, y);
   }
   g.font = '10px ui-monospace, monospace';
