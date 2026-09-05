@@ -15,6 +15,11 @@ const P = {
   text:    '#c9503c',
   visible: '#d8f4ff',
   sweep:   'rgba(201,80,60,0.10)',
+  // M4: meteor shower radiants. A distinct deep red/crimson, warmer than the
+  // grid but never #d8f4ff - a radiant is a region of sky to watch, not an
+  // object visible right now, and must stay visually unmistakable from that.
+  radiant:     '#e0293f',
+  radiantPeak: '#ff6b57',
 };
 
 const cv = document.getElementById('scope');
@@ -248,10 +253,38 @@ function drawStatus() {
   }
 }
 
+// Radiants (M4) draw as a soft glow rather than a hard dot - a radiant is a
+// region of sky worth watching, not an object to point at. Drawn before the
+// blips so a satellite dot always reads on top of the glow rather than being
+// swallowed by it. Size scales gently with ZHR so the strongest showers
+// (Geminids, Perseids) read as a bigger patch of sky than a minor one.
+function drawRadiants() {
+  if (!snap || !snap.radiants) return;
+  const dim = linkLost() ? 0.4 : 1;
+
+  for (const rad of snap.radiants) {
+    const [x, y] = polar(rad.r, rad.theta);
+    const radius = Math.max(6, Math.min(20, 6 + rad.zhr * 0.08));
+    const colour = rad.atPeak ? P.radiantPeak : P.radiant;
+
+    const grad = g.createRadialGradient(x, y, 0, x, y, radius);
+    grad.addColorStop(0, colour);
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+
+    g.globalAlpha = dim * (rad.atPeak ? 0.55 : 0.35);
+    g.fillStyle = grad;
+    g.beginPath();
+    g.arc(x, y, radius, 0, Math.PI * 2);
+    g.fill();
+  }
+  g.globalAlpha = 1;
+}
+
 function frame() {
   sweepDeg = (sweepDeg + 1.5) % 360;
   drawChrome();
   drawSweep();
+  drawRadiants();
   drawBlips();
   drawStatus();
   requestAnimationFrame(frame);
@@ -390,6 +423,35 @@ function renderRoster() {
   body.innerHTML = rows;
 }
 
+// One roster row for an active meteor shower radiant.
+function showerRow(r) {
+  const bearing = compassPoint(r.theta) + ' ' +
+    Math.round(((r.theta % 360) + 360) % 360);
+
+  const classes = ['roster-row'];
+  if (r.atPeak) classes.push('shower-peak');
+
+  return '<tr class="' + classes.join(' ') + '">' +
+    '<td>' + escapeHtml(r.name) + '</td>' +
+    '<td>' + r.el.toFixed(1) + '&deg;</td>' +
+    '<td>' + bearing + '</td>' +
+    '<td>' + r.zhr + '</td>' +
+    '<td>' + (r.atPeak ? 'At peak' : 'Active') + '</td>' +
+    '</tr>';
+}
+
+function renderShowers() {
+  const body = document.getElementById('showers-body');
+  if (!body) return;
+
+  if (!snap || !snap.radiants || snap.radiants.length === 0) {
+    body.innerHTML = '<tr><td class="roster-empty" colspan="5">NO SHOWER ACTIVE</td></tr>';
+    return;
+  }
+
+  body.innerHTML = snap.radiants.map(showerRow).join('');
+}
+
 async function poll() {
   try {
     const res = await fetch('/api/scope', { cache: 'no-store' });
@@ -402,6 +464,7 @@ async function poll() {
     consecutiveFailures++;
   }
   renderRoster();
+  renderShowers();
 }
 
 setInterval(poll, 1000);

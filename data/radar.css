@@ -63,7 +63,8 @@ form a { color: #c9503c; opacity: 0.6; text-align: center; }
    instrument. Same palette as radar.js's P (bg #060305/#0a0708, text #c9503c,
    dim borders #3a1210/#5a1c17/#6b241d), but plain HTML chrome so it never
    reads as canvas content. #d8f4ff stays reserved for "visible right now". */
-#roster-wrap {
+#roster-wrap,
+#showers-wrap {
   width: 720px;
   max-width: 92vw;
 }
@@ -81,7 +82,8 @@ form a { color: #c9503c; opacity: 0.6; text-align: center; }
   width: 100%;
 }
 
-#roster {
+#roster,
+#showers {
   width: 100%;
   border-collapse: collapse;
   background: #0a0708;
@@ -89,7 +91,9 @@ form a { color: #c9503c; opacity: 0.6; text-align: center; }
 }
 
 #roster th,
-#roster td {
+#roster td,
+#showers th,
+#showers td {
   text-align: left;
   padding: 5px 9px;
   border-bottom: 1px solid #3a1210;
@@ -97,7 +101,8 @@ form a { color: #c9503c; opacity: 0.6; text-align: center; }
   white-space: nowrap;
 }
 
-#roster th {
+#roster th,
+#showers th {
   color: #6b241d;
   font-weight: normal;
   text-transform: uppercase;
@@ -105,8 +110,10 @@ form a { color: #c9503c; opacity: 0.6; text-align: center; }
 }
 
 #roster td { color: #c9503c; }
+#showers td { color: #c9503c; }
 
-#roster tbody tr:last-child td { border-bottom: none; }
+#roster tbody tr:last-child td,
+#showers tbody tr:last-child td { border-bottom: none; }
 
 /* The row the panel's status arc is currently cycling to. */
 #roster tbody tr.roster-active {
@@ -117,7 +124,12 @@ form a { color: #c9503c; opacity: 0.6; text-align: center; }
 /* visible=true right now. #d8f4ff is reserved for this state alone. */
 #roster tbody tr.roster-visible td { color: #d8f4ff; }
 
-#roster .roster-empty {
+/* A shower at its peak tonight - a warmer glow colour, never #d8f4ff, since a
+   radiant is a region to watch rather than an object currently visible. */
+#showers tbody tr.shower-peak td { color: #ff6b57; }
+
+#roster .roster-empty,
+#showers .roster-empty {
   text-align: center;
   opacity: 0.5;
   padding: 10px;

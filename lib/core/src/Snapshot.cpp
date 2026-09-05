@@ -149,6 +149,26 @@ std::string toJson(const Snapshot& s) {
         j += (e.visible ? "true" : "false");
         j += '}';
     }
+    j += "]";
+
+    j += ",\"radiants\":[";
+    for (size_t i = 0; i < s.radiants.size(); ++i) {
+        const Radiant& r = s.radiants[i];
+        if (i > 0) j += ',';
+        j += "{\"name\":\"";
+        j += escape(r.name);
+        j += "\",\"r\":";
+        j += num(r.r, 4);
+        j += ",\"theta\":";
+        j += num(r.theta, 2);
+        j += ",\"el\":";
+        j += num(r.elevationDeg, 2);
+        j += ",\"zhr\":";
+        j += std::to_string(r.zhr);
+        j += ",\"atPeak\":";
+        j += (r.atPeak ? "true" : "false");
+        j += '}';
+    }
     j += "]}";
     return j;
 }

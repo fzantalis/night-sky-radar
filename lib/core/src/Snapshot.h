@@ -68,6 +68,20 @@ struct Event {
     bool        visible  = false;
 };
 
+// A meteor shower radiant currently worth showing on the dial. Unlike a Blip,
+// this is not an object to point at - it is a region of sky to watch, drawn
+// as a soft glow rather than a hard dot (see M4 plan Task 3). Only included
+// when the shower is active, the radiant is above the horizon, and the sun is
+// below MAX_SUN_ALT_DEG - ScopeService::build() enforces all three.
+struct Radiant {
+    std::string name;
+    double      r        = 0.0;   // same projection convention as Blip::r
+    double      theta    = 0.0;   // degrees, sky frame, 0 = true north
+    double      elevationDeg = 0.0;
+    int         zhr      = 0;
+    bool        atPeak   = false;
+};
+
 struct Snapshot {
     int64_t     t            = 0;
     ScopeStatus status       = ScopeStatus::NoTime;
@@ -76,6 +90,7 @@ struct Snapshot {
     std::vector<Ring> rings  = defaultSkyRings();
     double      sunAltDeg    = 0.0;
     std::vector<Event> events;
+    std::vector<Radiant> radiants;
 };
 
 // Sorts visible objects first, then by ascending r (higher in the sky first),
