@@ -3,6 +3,8 @@
 
 #include "CoreAlloc.h"
 #include "Config.h"
+#include "Display.h"
+#include "GestureInput.h"
 #include "HttpApi.h"
 #include "ModeButton.h"
 #include "NeoService.h"
@@ -43,6 +45,11 @@ void setup() {
 
     config::begin();
 
+    // Early, so the panel is showing something (NO TIME, at this point) while
+    // WiFi and NTP are still working - a dark screen through a 10 second boot
+    // reads as a dead device.
+    display::begin();
+
     net::begin();
 
     // httpapi::begin() mounts LittleFS; scope::begin() needs that filesystem
@@ -72,6 +79,13 @@ void setup() {
     neoservice::begin();
 
     statusled::begin();
+
+    // The gesture sensor is the intended input. BOOT stays wired as a fallback
+    // and is only consulted when the sensor did not answer on I2C, so a
+    // miswired or missing sensor never leaves the instrument with no input at
+    // all - which matters most during bring-up, when that is exactly the state
+    // it is likely to be in.
+    gestureinput::begin();
     modebutton::begin();
 
     Serial.printf("[boot] psram: %u bytes\n",
@@ -82,8 +96,13 @@ void loop() {
     net::loop();
     scope::loop();
     httpapi::loop();
-    modebutton::update();
-    statusled::update(scope::currentSnapshot());
+
+    gestureinput::loop();
+    if (!gestureinput::present()) modebutton::update();
+
+    const Snapshot& snap = scope::currentSnapshot();
+    statusled::update(snap);
+    display::loop(snap);
 
     // All three return promptly, so without this loop() spins at 100% on
     // core 1 and permanently starves the idle task (watchdog feed, RTOS

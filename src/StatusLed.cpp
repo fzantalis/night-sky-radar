@@ -3,23 +3,18 @@
 #include <Arduino.h>
 
 #include "LedPolicy.h"
+#include "Ws2812.h"
 
-// Which GPIO the status LED sits on.
+// Which GPIO the status strip sits on.
 //
-// Defaults to the board's own RGB_BUILTIN, which on the esp32s3 variant is 97
-// and resolves to GPIO48. On this particular DevKitC-1 clone that lights
-// nothing: tools/ledprobe swept every safely drivable pin as a plain LED of
-// either polarity and as a WS2812, including a pass that held every other pin
-// high in case the LED's power is gated behind an enable pin, and no pin ever
-// lit the onboard part. The conclusion is that it is not reachable from
-// software on this board.
-//
-// The policy layer (LedPolicy.cpp) is unaffected by that and stays fully
-// tested, so wiring an external WS2812 to any free GPIO needs no code change -
-// just build with -DSTATUS_LED_PIN=<gpio>. Data to the GPIO, 5V or 3V3 to VCC,
-// ground to ground.
+// This was RGB_BUILTIN through M5. The onboard part on this DevKitC-1 clone
+// could not be lit from software at all: tools/ledprobe swept every safely
+// drivable pin as a plain LED of either polarity and as a WS2812, including a
+// pass that held every other pin high in case its power was gated behind an
+// enable pin, and nothing ever lit. M6 replaces it with three external WS2812s,
+// which also buys the countdown bar - something one pixel could never show.
 #ifndef STATUS_LED_PIN
-#define STATUS_LED_PIN RGB_BUILTIN
+#define STATUS_LED_PIN 15
 #endif
 
 namespace statusled {
@@ -32,20 +27,27 @@ namespace {
 constexpr uint32_t WRITE_INTERVAL_MS = 50;
 
 uint32_t lastWriteMs = 0;
-LedColor lastColor{};
+LedStrip lastStrip{};
 bool     everWritten = false;
+
+bool sameStrip(const LedStrip& a, const LedStrip& b) {
+    for (int i = 0; i < LED_COUNT; ++i) {
+        if (a.px[i].r != b.px[i].r) return false;
+        if (a.px[i].g != b.px[i].g) return false;
+        if (a.px[i].b != b.px[i].b) return false;
+    }
+    return true;
+}
 
 }  // namespace
 
 void begin() {
-    Serial.printf("[led] status LED on pin %d\n", static_cast<int>(STATUS_LED_PIN));
+    ws2812::begin(STATUS_LED_PIN, LED_COUNT);
 
-    // Force the first update() to actually write, even if ledFor() happens to
-    // return {0,0,0} (quiet sky) on boot - neopixelWrite() itself defaults the
-    // pixel off, but this keeps begin()/update() free of any assumption about
-    // hardware reset state.
-    lastWriteMs  = millis() - WRITE_INTERVAL_MS;
-    everWritten  = false;
+    // Force the first update() to actually write, even if ledStripFor() happens
+    // to return an all-dark strip (quiet sky) on boot.
+    lastWriteMs = millis() - WRITE_INTERVAL_MS;
+    everWritten = false;
 }
 
 void update(const Snapshot& s) {
@@ -53,17 +55,15 @@ void update(const Snapshot& s) {
     if (millis() - lastWriteMs < WRITE_INTERVAL_MS) return;
     lastWriteMs = millis();
 
-    const LedColor c = ledFor(s, millis());
+    const LedStrip strip = ledStripFor(s, millis());
 
-    // No policy here - ledFor() decided everything. This is purely "did the
-    // answer change" so an unchanged colour doesn't retrigger the RMT
+    // No policy here - ledStripFor() decided everything. This is purely "did
+    // the answer change" so an unchanged strip doesn't retrigger the RMT
     // transaction 20 times a second for nothing.
-    if (everWritten && c.r == lastColor.r && c.g == lastColor.g && c.b == lastColor.b) {
-        return;
-    }
+    if (everWritten && sameStrip(strip, lastStrip)) return;
 
-    neopixelWrite(STATUS_LED_PIN, c.r, c.g, c.b);
-    lastColor   = c;
+    ws2812::show(strip.px, LED_COUNT);
+    lastStrip   = strip;
     everWritten = true;
 }
 

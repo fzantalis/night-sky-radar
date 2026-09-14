@@ -165,6 +165,126 @@ void test_a_nearer_pass_pulses_faster(void) {
     TEST_ASSERT_TRUE(nearTurns > farTurns);
 }
 
+
+// ------------------------------------------------------- M6: countdown bar
+
+static int litCount(const LedStrip& st) {
+    int n = 0;
+    for (int i = 0; i < LED_COUNT; ++i) {
+        if (!isOff(st.px[i])) n++;
+    }
+    return n;
+}
+
+// The stage boundaries, pinned from both sides. A bar that lit a constant
+// number of pixels, or got the comparisons backwards, fails here.
+void test_countdown_bar_stages(void) {
+    TEST_ASSERT_EQUAL_INT(1, countdownPixels(600));   // window edge
+    TEST_ASSERT_EQUAL_INT(1, countdownPixels(301));
+    TEST_ASSERT_EQUAL_INT(2, countdownPixels(300));   // stage 2 boundary
+    TEST_ASSERT_EQUAL_INT(2, countdownPixels(61));
+    TEST_ASSERT_EQUAL_INT(3, countdownPixels(60));    // stage 3 boundary
+    TEST_ASSERT_EQUAL_INT(3, countdownPixels(0));
+}
+
+// Nothing outside the window lights the bar at all, including a pass that has
+// already begun - a negative startsIn must not wrap into "urgent".
+void test_countdown_bar_is_dark_outside_the_window(void) {
+    TEST_ASSERT_EQUAL_INT(0, countdownPixels(601));
+    TEST_ASSERT_EQUAL_INT(0, countdownPixels(100000));
+    TEST_ASSERT_EQUAL_INT(0, countdownPixels(-1));
+    TEST_ASSERT_EQUAL_INT(0, countdownPixels(-100000));
+}
+
+// The bar must never shrink as a pass gets closer. Sweeping the whole window
+// catches a non-monotonic mapping that spot checks at the boundaries could
+// step straight over.
+void test_countdown_bar_never_shrinks_as_the_pass_approaches(void) {
+    int previous = 0;
+    for (int64_t t = ALERT_WINDOW_SEC; t >= 0; --t) {
+        const int n = countdownPixels(t);
+        TEST_ASSERT_TRUE(n >= previous);
+        TEST_ASSERT_TRUE(n >= 0 && n <= LED_COUNT);
+        previous = n;
+    }
+    TEST_ASSERT_EQUAL_INT(LED_COUNT, previous);
+}
+
+void test_strip_is_dark_on_a_quiet_sky(void) {
+    const LedStrip st = ledStripFor(okSnapshot(), 0);
+    TEST_ASSERT_EQUAL_INT(0, litCount(st));
+}
+
+void test_strip_counts_down_towards_a_pass(void) {
+    Snapshot s = okSnapshot();
+
+    s.events.clear();
+    s.events.push_back(visiblePassIn(540));
+    TEST_ASSERT_EQUAL_INT(1, litCount(ledStripFor(s, 0)));
+
+    s.events.clear();
+    s.events.push_back(visiblePassIn(200));
+    TEST_ASSERT_EQUAL_INT(2, litCount(ledStripFor(s, 0)));
+
+    s.events.clear();
+    s.events.push_back(visiblePassIn(30));
+    TEST_ASSERT_EQUAL_INT(3, litCount(ledStripFor(s, 0)));
+}
+
+// The bar fills from pixel 0 - the end nearest the data input - so it always
+// grows from the same physical end.
+void test_strip_fills_from_the_first_pixel(void) {
+    Snapshot s = okSnapshot();
+    s.events.push_back(visiblePassIn(540));
+    const LedStrip st = ledStripFor(s, 0);
+    TEST_ASSERT_FALSE(isOff(st.px[0]));
+    TEST_ASSERT_TRUE(isOff(st.px[1]));
+    TEST_ASSERT_TRUE(isOff(st.px[2]));
+}
+
+// Setup and "visible right now" are whole-instrument states, so the bar is
+// uniform rather than partially filled - a partial bar there would read as a
+// countdown to nothing.
+void test_whole_bar_lights_for_setup_and_visible_states(void) {
+    Snapshot noTime;
+    noTime.status = ScopeStatus::NoTime;
+    TEST_ASSERT_EQUAL_INT(LED_COUNT, litCount(ledStripFor(noTime, 500)));
+
+    Snapshot vis = okSnapshot();
+    Blip b;
+    b.name = "ISS (ZARYA)";
+    b.visible = true;
+    vis.blips.push_back(b);
+    TEST_ASSERT_EQUAL_INT(LED_COUNT, litCount(ledStripFor(vis, 500)));
+}
+
+// Whatever the bar lights, it must agree with the single-pixel policy about
+// the colour - the two entry points share one state classifier precisely so
+// they cannot drift.
+void test_strip_colour_matches_the_single_pixel_policy(void) {
+    Snapshot s = okSnapshot();
+    s.events.push_back(visiblePassIn(120));
+    const uint32_t phase = 777;
+    const LedColor one = ledFor(s, phase);
+    const LedStrip st  = ledStripFor(s, phase);
+    TEST_ASSERT_EQUAL_UINT8(one.r, st.px[0].r);
+    TEST_ASSERT_EQUAL_UINT8(one.g, st.px[0].g);
+    TEST_ASSERT_EQUAL_UINT8(one.b, st.px[0].b);
+}
+
+// The night-adaptation cap is the whole reason this instrument is dim; three
+// pixels must not quietly become three times a bright one.
+void test_every_pixel_respects_the_brightness_cap(void) {
+    Snapshot s = okSnapshot();
+    s.events.push_back(visiblePassIn(10));
+    for (uint32_t phase = 0; phase < 5000; phase += 37) {
+        const LedStrip st = ledStripFor(s, phase);
+        for (int i = 0; i < LED_COUNT; ++i) {
+            TEST_ASSERT_TRUE(maxChannel(st.px[i]) <= LED_MAX_BRIGHTNESS);
+        }
+    }
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_quiet_sky_is_dark);
@@ -179,5 +299,14 @@ int main(int, char**) {
     RUN_TEST(test_brightness_never_exceeds_the_cap);
     RUN_TEST(test_colour_constants_respect_brightness_cap);
     RUN_TEST(test_a_nearer_pass_pulses_faster);
+    RUN_TEST(test_countdown_bar_stages);
+    RUN_TEST(test_countdown_bar_is_dark_outside_the_window);
+    RUN_TEST(test_countdown_bar_never_shrinks_as_the_pass_approaches);
+    RUN_TEST(test_strip_is_dark_on_a_quiet_sky);
+    RUN_TEST(test_strip_counts_down_towards_a_pass);
+    RUN_TEST(test_strip_fills_from_the_first_pixel);
+    RUN_TEST(test_whole_bar_lights_for_setup_and_visible_states);
+    RUN_TEST(test_strip_colour_matches_the_single_pixel_policy);
+    RUN_TEST(test_every_pixel_respects_the_brightness_cap);
     return UNITY_END();
 }
