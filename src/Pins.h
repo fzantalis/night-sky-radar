@@ -52,10 +52,20 @@ constexpr int PIN_GESTURE_INT = 16;
 
 // --- Status LEDs: 2x WS2812 ---------------------------------------------
 //
-// Powered from 5 V, driven with 3.3 V logic. That is marginally below the
-// WS2812's nominal 0.7*VDD threshold and is the first thing to suspect if the
-// pixels flicker or show wrong colours; a signal diode in series with the
-// strip's +5 V drops it to ~4.3 V and fixes it.
+// Powered from 3V3, NOT 5V. Do not "fix" this back to the 5 V rail.
+//
+// The 5 V pin reads 0 V on this particular clone board, so the strip was moved
+// to 3.3 V during bring-up - and that turned out to be the correct wiring
+// regardless. A WS2812 needs a logic high above 0.7*VDD. On a 5 V supply that
+// is 3.5 V, which an ESP32 GPIO cannot actually reach, so driving a 5 V strip
+// from this board was always marginal and would have been the first suspect
+// for any future flicker. At a 3.3 V supply the threshold drops to 2.31 V and
+// the same GPIO clears it comfortably.
+//
+// The trade is that 3.3 V sits just under the WS2812B's nominal 3.5 V minimum.
+// It works, and nothing here runs near the part's limits: brightness is capped
+// at 64/255 to protect dark adaptation, and two pixels draw roughly 40 mA,
+// well inside the onboard regulator.
 //
 // Pixel 0 is the end nearest the data input - the countdown bar always fills
 // from there (see LedPolicy.cpp).
