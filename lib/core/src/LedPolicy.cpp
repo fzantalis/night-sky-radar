@@ -99,7 +99,6 @@ LedColor alertColour(uint32_t phaseMs, int64_t soonest) {
 int countdownPixels(int64_t startsIn) {
     if (startsIn < 0 || startsIn > ALERT_WINDOW_SEC) return 0;
     if (startsIn > ALERT_STAGE_2_SEC) return 1;
-    if (startsIn > ALERT_STAGE_3_SEC) return 2;
     return LED_COUNT;
 }
 

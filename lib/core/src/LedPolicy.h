@@ -14,18 +14,25 @@ constexpr uint8_t LED_MAX_BRIGHTNESS = 64;
 // Only alert about a pass this close. Further out is not actionable.
 constexpr int64_t ALERT_WINDOW_SEC = 600;
 
-// M6: three WS2812s on one data line, used as a countdown bar rather than as
-// three independent lamps. How many pixels are lit says how close the next
+// M6: two WS2812s on one data line, used as a countdown bar rather than as
+// two independent lamps. How many pixels are lit says how close the next
 // visible pass is, so the instrument is readable across a dark room without
 // reading anything - which one pixel could not do.
-constexpr int LED_COUNT = 3;
+//
+// Two rather than three because three did not fit the enclosure. That is not
+// just a smaller number: with three pixels the bar had stages at 10, 5 and 1
+// minutes, and simply clamping that to two would leave the 1-minute threshold
+// with no observable effect - a dead constant that every test would still pass
+// without. So the bar is explicitly two stages, and the finer urgency is
+// carried by the pulse rate instead, which is continuous and needs no pixels:
+// the breathe period shrinks from ~2000ms at the window edge to ~400ms as the
+// pass arrives (see ALERT_PERIOD_NEAR_MS in LedPolicy.cpp).
+constexpr int LED_COUNT = 2;
 
 // Bar stages, in seconds before the pass starts:
-//   > 300      one pixel     "something is coming"
-//   300 .. 60  two pixels    "get your shoes on"
-//   < 60       three pixels  "go outside now"
+//   > 300   one pixel    "something is coming"
+//   <= 300  both pixels  "go outside now"
 constexpr int64_t ALERT_STAGE_2_SEC = 300;
-constexpr int64_t ALERT_STAGE_3_SEC = 60;
 
 struct LedStrip {
     LedColor px[LED_COUNT];

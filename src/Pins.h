@@ -50,7 +50,7 @@ constexpr int PIN_I2C_SDA     = 17;
 constexpr int PIN_I2C_SCL     = 18;
 constexpr int PIN_GESTURE_INT = 16;
 
-// --- Status LEDs: 3x WS2812 ---------------------------------------------
+// --- Status LEDs: 2x WS2812 ---------------------------------------------
 //
 // Powered from 5 V, driven with 3.3 V logic. That is marginally below the
 // WS2812's nominal 0.7*VDD threshold and is the first thing to suspect if the

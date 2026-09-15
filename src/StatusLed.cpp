@@ -11,7 +11,7 @@
 // could not be lit from software at all: tools/ledprobe swept every safely
 // drivable pin as a plain LED of either polarity and as a WS2812, including a
 // pass that held every other pin high in case its power was gated behind an
-// enable pin, and nothing ever lit. M6 replaces it with three external WS2812s,
+// enable pin, and nothing ever lit. M6 replaces it with two external WS2812s,
 // which also buys the countdown bar - something one pixel could never show.
 #ifndef STATUS_LED_PIN
 #define STATUS_LED_PIN 15

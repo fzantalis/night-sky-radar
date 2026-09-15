@@ -6,11 +6,16 @@ namespace ws2812 {
 
 namespace {
 
-// Three pixels is 72 symbols, plus one trailing reset symbol. RMT_MEM_64 holds
-// only 64, so a three-pixel frame does not fit in a single block - it needs two
-// (128 symbols). Getting this wrong does not fail loudly; it corrupts the tail
-// of the frame, which looks like one stubbornly wrong pixel.
-constexpr int MAX_PIXELS = 8;
+// Each pixel is 24 RMT symbols, plus one trailing reset symbol for the whole
+// frame. Two pixels is 49 symbols, which would fit a single 64-symbol block,
+// but the channel is allocated as RMT_MEM_128 so the pixel count can be changed
+// without silently overrunning: three pixels is already 73.
+//
+// MAX_PIXELS is what the 128-symbol allocation can actually hold -
+// 5 * 24 + 1 = 121 - rather than a round number. Overrunning it does not fail
+// loudly; it corrupts the tail of the frame, which looks like one stubbornly
+// wrong pixel at the far end of the strip.
+constexpr int MAX_PIXELS = 5;
 constexpr int BITS_PER_PIXEL = 24;
 constexpr int MAX_SYMBOLS = MAX_PIXELS * BITS_PER_PIXEL + 1;
 

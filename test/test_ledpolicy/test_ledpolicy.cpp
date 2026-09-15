@@ -176,15 +176,21 @@ static int litCount(const LedStrip& st) {
     return n;
 }
 
-// The stage boundaries, pinned from both sides. A bar that lit a constant
-// number of pixels, or got the comparisons backwards, fails here.
+// The stage boundary, pinned from both sides. A bar that lit a constant number
+// of pixels, or got the comparison backwards, fails here.
 void test_countdown_bar_stages(void) {
-    TEST_ASSERT_EQUAL_INT(1, countdownPixels(600));   // window edge
-    TEST_ASSERT_EQUAL_INT(1, countdownPixels(301));
-    TEST_ASSERT_EQUAL_INT(2, countdownPixels(300));   // stage 2 boundary
-    TEST_ASSERT_EQUAL_INT(2, countdownPixels(61));
-    TEST_ASSERT_EQUAL_INT(3, countdownPixels(60));    // stage 3 boundary
-    TEST_ASSERT_EQUAL_INT(3, countdownPixels(0));
+    TEST_ASSERT_EQUAL_INT(1, countdownPixels(ALERT_WINDOW_SEC));       // window edge
+    TEST_ASSERT_EQUAL_INT(1, countdownPixels(ALERT_STAGE_2_SEC + 1));
+    TEST_ASSERT_EQUAL_INT(2, countdownPixels(ALERT_STAGE_2_SEC));      // boundary is inclusive
+    TEST_ASSERT_EQUAL_INT(2, countdownPixels(0));
+}
+
+// Stated against LED_COUNT rather than a literal 2, so that changing the strip
+// length fails loudly here instead of silently capping the bar - which is
+// exactly what happened going from three pixels to two.
+void test_final_stage_lights_the_whole_bar(void) {
+    TEST_ASSERT_EQUAL_INT(LED_COUNT, countdownPixels(0));
+    TEST_ASSERT_EQUAL_INT(LED_COUNT, countdownPixels(ALERT_STAGE_2_SEC));
 }
 
 // Nothing outside the window lights the bar at all, including a pass that has
@@ -226,9 +232,11 @@ void test_strip_counts_down_towards_a_pass(void) {
     s.events.push_back(visiblePassIn(200));
     TEST_ASSERT_EQUAL_INT(2, litCount(ledStripFor(s, 0)));
 
+    // Closer still cannot light more than the strip has; the remaining urgency
+    // is carried by the pulse rate, which test_a_nearer_pass_pulses_faster pins.
     s.events.clear();
     s.events.push_back(visiblePassIn(30));
-    TEST_ASSERT_EQUAL_INT(3, litCount(ledStripFor(s, 0)));
+    TEST_ASSERT_EQUAL_INT(LED_COUNT, litCount(ledStripFor(s, 0)));
 }
 
 // The bar fills from pixel 0 - the end nearest the data input - so it always
@@ -238,8 +246,9 @@ void test_strip_fills_from_the_first_pixel(void) {
     s.events.push_back(visiblePassIn(540));
     const LedStrip st = ledStripFor(s, 0);
     TEST_ASSERT_FALSE(isOff(st.px[0]));
-    TEST_ASSERT_TRUE(isOff(st.px[1]));
-    TEST_ASSERT_TRUE(isOff(st.px[2]));
+    for (int i = 1; i < LED_COUNT; ++i) {
+        TEST_ASSERT_TRUE(isOff(st.px[i]));
+    }
 }
 
 // Setup and "visible right now" are whole-instrument states, so the bar is
@@ -300,6 +309,7 @@ int main(int, char**) {
     RUN_TEST(test_colour_constants_respect_brightness_cap);
     RUN_TEST(test_a_nearer_pass_pulses_faster);
     RUN_TEST(test_countdown_bar_stages);
+    RUN_TEST(test_final_stage_lights_the_whole_bar);
     RUN_TEST(test_countdown_bar_is_dark_outside_the_window);
     RUN_TEST(test_countdown_bar_never_shrinks_as_the_pass_approaches);
     RUN_TEST(test_strip_is_dark_on_a_quiet_sky);
