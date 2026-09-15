@@ -29,62 +29,124 @@ constexpr double VISIBLE_PERIOD_MS = 4000.0;
 constexpr double ALERT_PERIOD_NEAR_MS = 400.0;   // startsIn == 0
 constexpr double ALERT_PERIOD_FAR_MS  = 2000.0;  // startsIn == ALERT_WINDOW_SEC
 
+// --- State classification -------------------------------------------------
+//
+// Factored out so ledFor() and ledStripFor() cannot drift apart about which
+// state the instrument is in. They differ only in how many pixels they paint.
+
+bool needsSetup(const Snapshot& s) {
+    return s.status == ScopeStatus::NoTime || s.status == ScopeStatus::NoLocation;
+}
+
+bool anyVisibleNow(const Snapshot& s) {
+    for (const Blip& b : s.blips) {
+        if (b.visible) return true;
+    }
+    return false;
+}
+
+// Soonest visible event inside the alert window - only a naked-eye pass is
+// worth walking outside for. Returns false when there is none.
+bool soonestAlert(const Snapshot& s, int64_t& out) {
+    bool    found   = false;
+    int64_t soonest = ALERT_WINDOW_SEC;
+    for (const Event& e : s.events) {
+        if (!e.visible) continue;
+        if (e.startsIn < 0 || e.startsIn > ALERT_WINDOW_SEC) continue;
+        if (!found || e.startsIn < soonest) {
+            found   = true;
+            soonest = e.startsIn;
+        }
+    }
+    if (found) out = soonest;
+    return found;
+}
+
+LedColor setupColour(uint32_t phaseMs) {
+    const double br = breathe(phaseMs, static_cast<uint32_t>(SETUP_PERIOD_MS), 0.15);
+    LedColor c;
+    c.r = scale(ColorChannels::SETUP_RED, br);
+    c.g = scale(ColorChannels::SETUP_GREEN, br);
+    c.b = scale(ColorChannels::SETUP_BLUE, br);
+    return c;
+}
+
+LedColor visibleColour(uint32_t phaseMs) {
+    const double br = breathe(phaseMs, static_cast<uint32_t>(VISIBLE_PERIOD_MS), 0.15);
+    LedColor c;
+    c.r = scale(ColorChannels::VISIBLE_RED, br);
+    c.g = scale(ColorChannels::VISIBLE_GREEN, br);
+    c.b = scale(ColorChannels::VISIBLE_BLUE, br);
+    return c;
+}
+
+LedColor alertColour(uint32_t phaseMs, int64_t soonest) {
+    // Urgency: the pulse period shrinks linearly from ~2000ms at the window
+    // edge down to ~400ms as startsIn approaches zero, so the pass reads as
+    // more imminent without needing the dial.
+    const double frac = static_cast<double>(soonest) / static_cast<double>(ALERT_WINDOW_SEC);
+    const double periodMs = ALERT_PERIOD_NEAR_MS + frac * (ALERT_PERIOD_FAR_MS - ALERT_PERIOD_NEAR_MS);
+    const double br = breathe(phaseMs, static_cast<uint32_t>(periodMs), 0.15);
+    LedColor c;
+    c.r = scale(ColorChannels::ALERT_RED, br);
+    c.g = scale(ColorChannels::ALERT_GREEN, br);
+    c.b = scale(ColorChannels::ALERT_BLUE, br);
+    return c;
+}
+
 }  // namespace
+
+int countdownPixels(int64_t startsIn) {
+    if (startsIn < 0 || startsIn > ALERT_WINDOW_SEC) return 0;
+    if (startsIn > ALERT_STAGE_2_SEC) return 1;
+    return LED_COUNT;
+}
 
 LedColor ledFor(const Snapshot& s, uint32_t phaseMs) {
     // Setup states outrank everything else - nothing else can even be
     // computed correctly without a clock and a location.
-    if (s.status == ScopeStatus::NoTime || s.status == ScopeStatus::NoLocation) {
-        const double br = breathe(phaseMs, static_cast<uint32_t>(SETUP_PERIOD_MS), 0.15);
-        LedColor c;
-        c.r = scale(ColorChannels::SETUP_RED, br);
-        c.g = scale(ColorChannels::SETUP_GREEN, br);
-        c.b = scale(ColorChannels::SETUP_BLUE, br);
-        return c;
-    }
+    if (needsSetup(s)) return setupColour(phaseMs);
 
     // Something is up right now: the reserved cool "visible" colour outranks
     // an imminent pass, since "up now" is strictly more actionable than
     // "coming soon".
-    bool anyVisibleNow = false;
-    for (const Blip& b : s.blips) {
-        if (b.visible) { anyVisibleNow = true; break; }
-    }
-    if (anyVisibleNow) {
-        const double br = breathe(phaseMs, static_cast<uint32_t>(VISIBLE_PERIOD_MS), 0.15);
-        LedColor c;
-        c.r = scale(ColorChannels::VISIBLE_RED, br);
-        c.g = scale(ColorChannels::VISIBLE_GREEN, br);
-        c.b = scale(ColorChannels::VISIBLE_BLUE, br);
-        return c;
-    }
+    if (anyVisibleNow(s)) return visibleColour(phaseMs);
 
-    // Soonest visible event within the alert window - only a naked-eye pass
-    // is worth walking outside for.
-    bool    haveAlert = false;
-    int64_t soonest   = ALERT_WINDOW_SEC;
-    for (const Event& e : s.events) {
-        if (!e.visible) continue;
-        if (e.startsIn < 0 || e.startsIn > ALERT_WINDOW_SEC) continue;
-        if (!haveAlert || e.startsIn < soonest) {
-            haveAlert = true;
-            soonest   = e.startsIn;
-        }
-    }
-    if (haveAlert) {
-        // Urgency: the pulse period shrinks linearly from ~2000ms at the
-        // window edge down to ~400ms as startsIn approaches zero, so the
-        // pass reads as more imminent without needing the dial.
-        const double frac = static_cast<double>(soonest) / static_cast<double>(ALERT_WINDOW_SEC);
-        const double periodMs = ALERT_PERIOD_NEAR_MS + frac * (ALERT_PERIOD_FAR_MS - ALERT_PERIOD_NEAR_MS);
-        const double br = breathe(phaseMs, static_cast<uint32_t>(periodMs), 0.15);
-        LedColor c;
-        c.r = scale(ColorChannels::ALERT_RED, br);
-        c.g = scale(ColorChannels::ALERT_GREEN, br);
-        c.b = scale(ColorChannels::ALERT_BLUE, br);
-        return c;
-    }
+    int64_t soonest = 0;
+    if (soonestAlert(s, soonest)) return alertColour(phaseMs, soonest);
 
     // Quiet sky: fully off, not dim. This sits in a dark room.
     return LedColor{};
+}
+
+LedStrip ledStripFor(const Snapshot& s, uint32_t phaseMs) {
+    LedStrip out;   // every pixel defaults to off
+
+    // Setup and "visible right now" describe the whole instrument, not a time
+    // remaining. Filling only part of the bar for them would read as a
+    // countdown that is not counting down to anything, so the bar is uniform.
+    if (needsSetup(s)) {
+        const LedColor c = setupColour(phaseMs);
+        for (int i = 0; i < LED_COUNT; ++i) out.px[i] = c;
+        return out;
+    }
+
+    if (anyVisibleNow(s)) {
+        const LedColor c = visibleColour(phaseMs);
+        for (int i = 0; i < LED_COUNT; ++i) out.px[i] = c;
+        return out;
+    }
+
+    int64_t soonest = 0;
+    if (soonestAlert(s, soonest)) {
+        const LedColor c = alertColour(phaseMs, soonest);
+        const int lit = countdownPixels(soonest);
+        // Fill from pixel 0, which is the end nearest the data input - so the
+        // bar always grows from the same physical end no matter how the strip
+        // is mounted.
+        for (int i = 0; i < lit && i < LED_COUNT; ++i) out.px[i] = c;
+        return out;
+    }
+
+    return out;   // quiet sky: all off
 }

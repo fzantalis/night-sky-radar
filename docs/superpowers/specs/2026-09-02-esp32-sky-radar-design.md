@@ -59,8 +59,33 @@ Hardware target is an ESP32-S3-DevKitC-1 N16R8 (16 MB flash, 8 MB octal PSRAM). 
   Switching is BOOT on the device and arrow keys or space in the browser, both
   through `/api/mode` so the device and every open browser agree on one mode.
   See `docs/third-party/NEO-CAD-PROVENANCE.md`.
-- **M6** GC9A01 renderer — gated on buying the panel
-- **M7** Rotary encoder, captive-portal config, enclosure — gated on M6
+- **M6** Panel renderer, gesture input, status LEDs
+
+  **Implemented and verified on hardware 2026-09-15.** The hardware arrived
+  different from the plan in all three respects, and the central bet of section
+  3.1 is what absorbed it: because the core hands renderers finished
+  `(r, theta)` pairs, **not one line of orbital maths changed**.
+
+  - **Panel: GC9B72 360x360, not GC9A01 240x240.** LovyanGFX 1.2.29 carries a
+    `Panel_GC9B72`, so no vendored driver. The framebuffer is 253 KB and lives
+    in PSRAM; it cannot fit in internal RAM beside WiFi and ~200 tracked
+    objects. SPI runs at 20 MHz rather than the bus maximum, because too-fast
+    SPI does not fail cleanly — it yields intermittently corrupt pixels that
+    read as a rendering bug.
+  - **Input: PAJ7620U2 gesture sensor, not a rotary encoder or button.** Left
+    and right switch mode, up and down walk a brightness ladder, wave clears
+    the idle dim. BOOT survives as a fallback used only when the sensor does
+    not answer on I2C.
+  - **Status: two WS2812s, not a ring and not the onboard RGB.** The onboard
+    part proved unreachable from software (see `tools/ledprobe`). Two pixels
+    make the alert a countdown bar rather than a lamp.
+
+  Three defects only the real hardware could have surfaced, all recorded in
+  commit `e926ca6`: an RMT deadlock that hung the boot silently, panel colour
+  flags that were doubly wrong, and the LED bar going dark in NEO mode because
+  events were only attached on the SKY path.
+
+- **M7** Captive-portal config, enclosure — gated on M6
 
 **Revised 2026-09-04.** Two changes to the deferred list:
 
@@ -339,7 +364,7 @@ These are verification tasks, not undecided design questions:
 | M3 | Starlink train stream-filter | none |
 | M4 | Meteor shower radiants | none |
 | M5 | NEO mode; angle is time, radius is miss distance | none |
-| M6 | GC9A01 renderer | round panel |
-| M7 | NeoPixel ring, encoder, magnetometer, captive portal | ring, encoder, compass |
+| M6 | GC9B72 360x360 renderer, gesture input, 2x WS2812 | done |
+| M7 | Captive portal, enclosure, optional magnetometer | compass |
 
 **This spec covers M0–M2.** M3 onward get their own specs.

@@ -501,6 +501,21 @@ static Snapshot buildNeo(Snapshot s) {
     s.neoAgeHours = neoservice::ageHours(s.t);
     s.rings       = defaultNeoRings(neoservice::NEO_RIM_LD);
 
+    // Upcoming passes travel with the NEO snapshot too, even though this dial
+    // never draws them.
+    //
+    // The status LED reads whatever snapshot is current, and the whole reason
+    // that LED exists is so you do not have to look at the dial. Leaving events
+    // out here meant the countdown bar went dark for as long as you were
+    // looking at asteroids - the instrument silently stopped telling you the
+    // ISS was due, precisely because you had turned to the other view. Passes
+    // are a property of the sky, not of which projection is on screen.
+    //
+    // Free to include: passtask::upcoming() reads an already-computed cache and
+    // returns empty when no location is set, which is the NEO-without-location
+    // case this mode deliberately supports.
+    s.events = passtask::upcoming(s.t);
+
     for (const neo::Approach& a : neoservice::approaches()) {
         const int64_t in = a.approachUnix - s.t;
 
