@@ -78,7 +78,22 @@ void show(const LedColor* px, int count) {
     g_buf[i].duration1 = 500;
     ++i;
 
-    rmtWrite(g_rmt, g_buf, i);
+    // Blocking, not rmtWrite(), and this is load-bearing rather than cautious.
+    //
+    // rmtWrite() calls rmt_tx_stop() before queuing the new frame. If the
+    // previous frame is still transmitting, that stop prevents its TX-done
+    // interrupt from ever firing, so the driver's tx semaphore is never
+    // returned - and rmt_write_items() then waits on that semaphore with
+    // portMAX_DELAY. The result is a silent, permanent deadlock: no crash, no
+    // watchdog, just a board that stops mid-boot with no output.
+    //
+    // It surfaced the first time two frames were issued microseconds apart
+    // (the boot self-test). The 20 Hz update path never collided, so the bug
+    // sat latent. rmtWriteBlocking() returns only once the frame has actually
+    // finished, which guarantees the channel is idle for the next call and
+    // removes the hazard entirely. A two-pixel frame is ~200 us, so the cost
+    // is irrelevant at any rate this is called.
+    rmtWriteBlocking(g_rmt, g_buf, i);
 }
 
 }  // namespace ws2812

@@ -53,8 +53,20 @@ public:
             cfg.offset_y = 0;
             cfg.offset_rotation = 0;
             cfg.readable = false;            // no MISO wired
-            cfg.invert   = true;             // GC9xxx panels are inverted
-            cfg.rgb_order = false;
+            // Both of these were wrong on the first bring-up, and the way they
+            // were wrong is worth recording because one symptom identified two
+            // faults.
+            //
+            // The panel came up with a white field and brownish-yellow lines.
+            // A white background can only mean inversion is being applied when
+            // it should not - the palette's background is #060305, and nothing
+            // else turns that white. But inversion alone does not explain the
+            // lines: the chrome colour #c9503c inverts to #36afc3, a pale cyan,
+            // not brown. #c3af36 is that same cyan with its red and blue
+            // channels exchanged, so the colour order was reversed as well.
+            // Hence both flags flip, not just the obvious one.
+            cfg.invert   = false;
+            cfg.rgb_order = true;            // this panel is RGB, not BGR
             cfg.dlen_16bit = false;
             cfg.bus_shared = false;
             _panel.config(cfg);

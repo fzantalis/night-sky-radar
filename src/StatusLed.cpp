@@ -41,8 +41,36 @@ bool sameStrip(const LedStrip& a, const LedStrip& b) {
 
 }  // namespace
 
+// Walks the strip once at boot: pixel 0, then pixel 1, then both, then dark.
+//
+// Worth the 700 ms because of what the quiet state looks like. A correctly
+// working bar is *off* nearly all the time - it only lights for an imminent
+// visible pass - so "wired correctly" and "not wired at all" are the same
+// picture for hours at a stretch. That ambiguity is precisely what made the
+// onboard RGB take three rounds of probing to call dead.
+//
+// Lighting them in order also answers the one question mounting depends on:
+// which physical end is pixel 0, and therefore which way the countdown fills.
+static void selfTest() {
+    if (!ws2812::ready()) return;
+
+    LedColor px[LED_COUNT];
+    const LedColor on{LED_MAX_BRIGHTNESS, 0, 0};
+
+    for (int lit = 1; lit <= LED_COUNT; ++lit) {
+        for (int i = 0; i < LED_COUNT; ++i) px[i] = (i < lit) ? on : LedColor{};
+        ws2812::show(px, LED_COUNT);
+        delay(220);
+    }
+
+    for (int i = 0; i < LED_COUNT; ++i) px[i] = LedColor{};
+    ws2812::show(px, LED_COUNT);
+    Serial.println("[led] self-test done (pixel 0 lit first)");
+}
+
 void begin() {
     ws2812::begin(STATUS_LED_PIN, LED_COUNT);
+    selfTest();
 
     // Force the first update() to actually write, even if ledStripFor() happens
     // to return an all-dark strip (quiet sky) on boot.
