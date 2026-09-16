@@ -201,7 +201,13 @@ void drawChrome(const Snapshot& s) {
             if (i == 0) {
                 canvas.drawString("NOW", x, y);
             } else {
-                std::snprintf(buf, sizeof(buf), "+%dD", (days * i) / 4);
+                // Rounded, not truncated: a quarter of 30 days is 7.5, and
+                // integer division would label it "+7D" here while the web
+                // renderer rounds to "+8D". Same dial, same snapshot, two
+                // different numbers - exactly the drift the shared projection
+                // exists to prevent.
+                const int d = static_cast<int>(lround(days * i / 4.0));
+                std::snprintf(buf, sizeof(buf), "+%dD", d);
                 canvas.drawString(buf, x, y);
             }
         }
