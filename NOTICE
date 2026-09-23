@@ -1,0 +1,39 @@
+Night Sky Radar
+Copyright (c) 2026 fzantalis
+
+This product includes software developed as part of the following projects.
+
+-------------------------------------------------------------------------------
+SGP4 orbital propagator
+-------------------------------------------------------------------------------
+
+lib/core/src/sgp4/ contains a vendored copy of:
+
+    https://github.com/dnwrnr/sgp4
+    Copyright 2013 Daniel Warner
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+these files except in compliance with the License. You may obtain a copy of the
+License at:
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+The full licence text accompanies the vendored source at
+lib/core/src/sgp4/LICENSE.
+
+This implementation was chosen over Vallado's widely used reference code
+specifically because of its licence: the reference implementation is AGPL-3.0,
+whose network clause would have applied to this project's built-in web server.
+See docs/third-party/SGP4-PROVENANCE.md and
+docs/third-party/VALLADO-SGP4-PROVENANCE.md.
+
+-------------------------------------------------------------------------------
+Data sources
+-------------------------------------------------------------------------------
+
+Orbital elements are retrieved at runtime from CelesTrak (https://celestrak.org),
+asteroid close approaches from NASA/JPL's Small-Body Database
+(https://ssd-api.jpl.nasa.gov), and the meteor shower almanac is derived from
+the International Meteor Organization's published shower calendar
+(https://www.imo.net). None of this data is redistributed in this repository;
+see docs/third-party/ for the provenance of every figure that is.
