@@ -5,3 +5,6 @@ src/secrets.h
 *.elf
 tools/.n2yo_key
 test/fixtures/n2yo_*.txt
+
+# Sliced printer output - regenerated from the 3mf project, printer-specific
+*.gcode.3mf
