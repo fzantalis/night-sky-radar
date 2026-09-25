@@ -8,3 +8,11 @@ test/fixtures/n2yo_*.txt
 
 # Sliced printer output - regenerated from the 3mf project, printer-specific
 *.gcode.3mf
+
+# Enclosure CAD and print files - kept locally, not published
+*.FCStd
+*.FCStd1
+*.FCBak
+*.stl
+*.3mf
+Untitled.png
